@@ -22,7 +22,7 @@ impl<'a> Proxy<'a> {
         self.data
             .as_ref()
             .len()
-            .map(|l| JsonValue::number(l as f32))
+            .map(|l| JsonValue::number(l as f64))
             .map_err(JqlError::from)
     }
 

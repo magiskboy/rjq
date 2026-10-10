@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use crate::json::{error::JsonError, value::JsonValue};
+use crate::json::{error::JsonError, number::JsonNumber, value::JsonValue};
 
 /// A scalar the lexer/parser has already validated.
 ///
@@ -12,17 +12,8 @@ use crate::json::{error::JsonError, value::JsonValue};
 pub enum JsonAtom<'a> {
     Null,
     Bool(bool),
-    Number(JsonNumberAtom),
+    Number(JsonNumber<'a>),
     String(Cow<'a, str>),
-}
-
-/// Number payload after lexical validation.
-///
-/// Kept as a small enum so we can grow representations later (raw digit
-/// span, i64-or-f64, …) without changing every builder call site.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum JsonNumberAtom {
-    F32(f32),
 }
 
 /// Builds a target value tree while the parser walks JSON syntax.
@@ -70,7 +61,7 @@ impl<'a> JsonBuilder<'a> for JsonValueBuilder {
         Ok(match atom {
             JsonAtom::Null => JsonValue::null(),
             JsonAtom::Bool(v) => JsonValue::boolean(v),
-            JsonAtom::Number(JsonNumberAtom::F32(n)) => JsonValue::number(n),
+            JsonAtom::Number(n) => JsonValue::Number(n),
             JsonAtom::String(s) => JsonValue::string(s),
         })
     }
@@ -109,8 +100,8 @@ impl<'a> JsonBuilder<'a> for JsonValueBuilder {
     fn end_object(&mut self, object: Self::Object) -> Result<Self::Value, Self::Error> {
         // Collect through HashMap so duplicate keys keep the last value,
         // matching the previous parser behavior.
-        Ok(JsonValue::object(HashMap::<Cow<'a, str>, JsonValue<'a>>::from_iter(
-            object.into_iter(),
-        )))
+        Ok(JsonValue::object(
+            HashMap::<Cow<'a, str>, JsonValue<'a>>::from_iter(object.into_iter()),
+        ))
     }
 }

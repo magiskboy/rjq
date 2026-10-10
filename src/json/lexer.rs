@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use crate::json::{
     error::{JsonError, JsonErrorKind},
     escape::{UnescapeError, is_escape_token, must_be_escaped, unescape_json_string},
+    number::{JsonNumber, JsonNumberKind},
     source::SliceCursor,
     token::{JsonToken, JsonTokenKind},
 };
@@ -341,17 +342,17 @@ impl<'a> Lexer<'a> {
             return Err(self.error_at(JsonErrorKind::InvalidNumber, span, start_loc));
         }
 
-        match state {
-            ParseNumberState::InDecimal
-            | ParseNumberState::Integer
-            | ParseNumberState::ExpValue => {
-                let value = raw
-                    .parse::<f32>()
-                    .map_err(|_| self.error_at(JsonErrorKind::InvalidNumber, span, start_loc))?;
-                Ok(JsonToken::number(span, start_loc, value))
-            }
-            _ => Err(self.error_at(JsonErrorKind::InvalidNumber, span, start_loc)),
-        }
+        let kind = match state {
+            ParseNumberState::Integer => JsonNumberKind::IntegerLike,
+            ParseNumberState::InDecimal | ParseNumberState::ExpValue => JsonNumberKind::FloatLike,
+            _ => return Err(self.error_at(JsonErrorKind::InvalidNumber, span, start_loc)),
+        };
+
+        Ok(JsonToken::number(
+            span,
+            start_loc,
+            JsonNumber::new(Cow::Borrowed(raw), kind),
+        ))
     }
 
     fn peek_bytes(&self, len: usize) -> Option<&'a [u8]> {

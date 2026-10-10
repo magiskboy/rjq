@@ -30,27 +30,44 @@ cargo test
 
 ## Benchmarks
 
+Fixture ~5 MiB, Darwin arm64, Python 3.13. Re-run:
+
+```bash
+cargo build --release --features cli
+# Python binding: maturin develop --release
+python scripts/bench_rjson_py.py --size-mb 5
+python scripts/bench_parse.py --size-mb 5
+```
+
 ### Python parse (`rjson` vs others)
 
 Full parse into a Python object tree (`dict` / `list` / …).
 
 | Parser | median | MB/s | vs `rjson` (wall) |
 |---|---:|---:|---:|
-| `rjson.rjson_loads` | 136 ms | 37 | 1.00× (baseline) |
-| `rjson.rjson_load` | 135 ms | 37 | 1.00× |
-| `json.loads` | 37 ms | 136 | **0.27×** (faster than rjson) |
-| `json.loads(bytes)` | 35 ms | 143 | **0.26×** |
-| `ujson.loads` | 35 ms | 142 | **0.26×** |
-| `ujson.loads(bytes)` | 33 ms | 150 | **0.25×** |
-| `orjson.loads` | 24 ms | 213 | **0.17×** |
-| `orjson.loads(bytes)` | 22 ms | 228 | **0.16×** |
+| `rjson.rjson_loads` | 85 ms | 59 | 1.00× (baseline) |
+| `rjson.rjson_load` | 83 ms | 61 | 0.98× |
+| `json.loads` | 38 ms | 132 | **0.45×** (faster than rjson) |
+| `json.loads(bytes)` | 35 ms | 144 | **0.41×** |
+| `ujson.loads` | 32 ms | 154 | **0.38×** |
+| `ujson.loads(bytes)` | 30 ms | 165 | **0.36×** |
+| `orjson.loads` | 23 ms | 217 | **0.27×** |
+| `orjson.loads(bytes)` | 21 ms | 238 | **0.25×** |
 
 ### CLI parse (`rs-jq` vs stock `jq`)
 
 | Tool | median | MB/s | tokens/s | peak RSS | vs `rs-jq` (wall) |
 |---|---:|---:|---:|---:|---:|
-| `rs-jq` (`target/release/jq`) | 190 ms | 26 | 8.1M | ~107 MiB | 1.00× (baseline) |
-| stock `jq` | 300 ms | 17 | 5.1M | ~67 MiB | **1.58×** (slower than rs-jq) |
+| `rs-jq` (`target/release/jq`) | 194 ms | 26 | 7.9M | ~110 MiB | 1.00× (baseline) |
+| stock `jq` | 289 ms | 17 | 5.3M | ~67 MiB | **1.49×** (slower than rs-jq) |
+
+## Optimization methods
+
+- **`Cow` for strings (and numbers)** — JSON strings without escapes and number spellings borrow the input buffer (`Cow::Borrowed`); only unescape / `into_owned` allocate. Avoids copying every scalar into a new `String` during lex/parse.
+- **Builder straight to the target type** — `JsonBuilder` separates syntax (parser) from representation. Native path builds `JsonValue`; Python path (`PyBuilder`) emits `PyDict` / `PyList` / scalars directly — no intermediate `JsonValue` tree on the `rjson` hot path.
+- **Lazy number parse** — lexer keeps the raw digit span (`JsonNumber` + `IntegerLike` / `FloatLike`). Parse to `i64` / `f64` (or Python `int` / `float` / big `int`) only when a consumer needs a numeric value; `json_dump` can rewrite the original spelling.
+- **SIMD + NEON** — vectorized scans for string specials and non-whitespace: AVX2 on `x86_64`, NEON on Apple Silicon / `aarch64`, with scalar fallback elsewhere.
+- **Pull bytes from lexer & parser** — cursor walks the input byte slice in place (`SliceCursor` / remaining window); tokens and values borrow spans instead of accumulating a separate owned buffer of characters as the primary representation.
 
 ## Notable JQL queries
 

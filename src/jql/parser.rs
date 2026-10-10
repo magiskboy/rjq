@@ -232,7 +232,7 @@ mod test {
         JqlAstNode::Access(path)
     }
 
-    fn number(n: f32) -> JqlAstNode<'static> {
+    fn number(n: f64) -> JqlAstNode<'static> {
         JqlAstNode::Number(n)
     }
 

@@ -4,7 +4,7 @@ use std::mem;
 use crate::Location;
 use crate::Span;
 use crate::json::{
-    builder::{JsonAtom, JsonBuilder, JsonNumberAtom, JsonValueBuilder},
+    builder::{JsonAtom, JsonBuilder, JsonValueBuilder},
     error::{ExpectedSyntax, JsonError, JsonErrorKind},
     lexer::Lexer,
     token::{JsonLexeme, JsonToken, JsonTokenKind},
@@ -307,9 +307,7 @@ impl<'a> JsonParser<'a> {
                 let lexeme = mem::replace(&mut self.current.lexeme, JsonLexeme::None);
                 self.bump()?;
                 match lexeme {
-                    JsonLexeme::Number(n) => {
-                        builder.atom(JsonAtom::Number(JsonNumberAtom::F32(n)))
-                    }
+                    JsonLexeme::Number(n) => builder.atom(JsonAtom::Number(n)),
                     _ => Err(self
                         .error(JsonErrorKind::InvalidNumber, span, location)
                         .into()),
@@ -366,7 +364,7 @@ mod test {
         JsonValue::string(text.to_string())
     }
 
-    fn number(n: f32) -> JsonValue<'static> {
+    fn number(n: f64) -> JsonValue<'static> {
         JsonValue::number(n)
     }
 
@@ -440,7 +438,7 @@ mod test {
 
     #[test]
     fn numbers() {
-        let input: [(&str, f32); 16] = [
+        let input: [(&str, f64); 16] = [
             ("0", 0.0),
             ("-0", -0.0),
             ("1", 1.0),
@@ -459,7 +457,22 @@ mod test {
             ("-2.5E+1", -25.0),
         ];
         for (s, expected) in input {
-            assert_eq!(parse(s), Ok(number(expected)), "number {:?}", s);
+            let value = parse(s).unwrap_or_else(|err| panic!("number {s:?}: {err}"));
+            match &value {
+                JsonValue::Number(n) => {
+                    assert_eq!(n.raw(), s, "raw spelling {:?}", s);
+                    let got = n.as_f64().unwrap();
+                    assert_eq!(
+                        got.to_bits(),
+                        expected.to_bits(),
+                        "value {:?} got={} expected={}",
+                        s,
+                        got,
+                        expected
+                    );
+                }
+                other => panic!("expected number for {s:?}, got {other:?}"),
+            }
         }
     }
 

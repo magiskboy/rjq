@@ -75,10 +75,17 @@ impl Engine {
         let output = Self::execute(value, path)?;
         match output.data() {
             JsonValue::Array(items) => {
-                let mut s = 0.0;
+                let mut s = 0.0_f64;
                 for item in items {
                     match item {
-                        JsonValue::Number(v) => s += v,
+                        JsonValue::Number(v) => {
+                            s += v.as_f64().map_err(|_| {
+                                JqlError::without_span(JqlErrorKind::TypeMismatch {
+                                    expected: "number",
+                                    found: "number",
+                                })
+                            })?;
+                        }
                         other => {
                             return Err(JqlError::without_span(JqlErrorKind::TypeMismatch {
                                 expected: "number",
@@ -87,7 +94,7 @@ impl Engine {
                         }
                     }
                 }
-                Ok(Proxy::owned(JsonValue::Number(s)))
+                Ok(Proxy::owned(JsonValue::number(s)))
             }
             other => Err(JqlError::without_span(JqlErrorKind::TypeMismatch {
                 expected: "array",

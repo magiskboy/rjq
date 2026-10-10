@@ -6,6 +6,7 @@ use crate::json::{
     JsonDumpOptions,
     error::{ExpectedJsonType, JsonError, JsonErrorKind, JsonType},
     json_dumps,
+    number::{JsonNumber, NumberError},
 };
 
 pub trait JsonOrd {
@@ -20,17 +21,17 @@ pub trait JsonLogic {
     fn try_as_bool(&self) -> Result<bool, Self::ErrorType>;
 }
 
-pub trait JsonNumber {
+pub trait JsonNumeric {
     type ErrorType;
 
     fn try_as_int(&self) -> Result<i32, Self::ErrorType>;
-    fn try_as_float(&self) -> Result<f32, Self::ErrorType>;
+    fn try_as_float(&self) -> Result<f64, Self::ErrorType>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsonValue<'a> {
     String(Cow<'a, str>),
-    Number(f32),
+    Number(JsonNumber<'a>),
     Null,
     True,
     False,
@@ -57,8 +58,12 @@ impl<'a> JsonValue<'a> {
         }
     }
 
-    pub fn number(value: f32) -> Self {
-        JsonValue::Number(value)
+    pub fn number(value: f64) -> Self {
+        JsonValue::Number(JsonNumber::from_f64(value))
+    }
+
+    pub fn number_raw(number: JsonNumber<'a>) -> Self {
+        JsonValue::Number(number)
     }
 
     pub fn string(value: impl Into<Cow<'a, str>>) -> Self {
@@ -85,7 +90,7 @@ impl<'a> JsonValue<'a> {
     pub fn into_owned(self) -> JsonValue<'static> {
         match self {
             JsonValue::String(s) => JsonValue::String(Cow::Owned(s.into_owned())),
-            JsonValue::Number(n) => JsonValue::Number(n),
+            JsonValue::Number(n) => JsonValue::Number(n.into_owned()),
             JsonValue::Null => JsonValue::Null,
             JsonValue::True => JsonValue::True,
             JsonValue::False => JsonValue::False,
@@ -107,12 +112,16 @@ impl JsonOrd for JsonValue<'_> {
 
     fn try_cmp(&self, other: &Self) -> Result<Ordering, JsonError> {
         match (self, other) {
-            (JsonValue::Number(l), JsonValue::Number(r)) => l.partial_cmp(r).ok_or_else(|| {
-                JsonError::value(JsonErrorKind::TypeMismatch {
-                    expected: ExpectedJsonType::Number,
-                    found: JsonType::Number,
+            (JsonValue::Number(l), JsonValue::Number(r)) => {
+                let lf = l.as_f64().map_err(number_error)?;
+                let rf = r.as_f64().map_err(number_error)?;
+                lf.partial_cmp(&rf).ok_or_else(|| {
+                    JsonError::value(JsonErrorKind::TypeMismatch {
+                        expected: ExpectedJsonType::Number,
+                        found: JsonType::Number,
+                    })
                 })
-            }),
+            }
             (JsonValue::Number(_), other) => Err(type_mismatch(other, ExpectedJsonType::Number)),
             (other, _) => Err(type_mismatch(other, ExpectedJsonType::Number)),
         }
@@ -131,38 +140,31 @@ impl JsonLogic for JsonValue<'_> {
     }
 }
 
-impl JsonNumber for JsonValue<'_> {
+impl JsonNumeric for JsonValue<'_> {
     type ErrorType = JsonError;
 
     fn try_as_int(&self) -> Result<i32, Self::ErrorType> {
-        let threshold = 1e-6_f32;
-
         match self {
             JsonValue::Number(v) => {
-                let x = *v;
-                if !x.is_finite() {
-                    return Err(JsonError::value(JsonErrorKind::InvalidCast));
-                }
-
-                let x64 = x as f64;
-                if x64 < i32::MIN as f64 || x64 > i32::MAX as f64 {
-                    return Err(JsonError::value(JsonErrorKind::InvalidCast));
-                }
-
-                if x.fract().abs() >= threshold {
-                    return Err(JsonError::value(JsonErrorKind::InvalidCast));
-                }
-
-                Ok(x as i32)
+                let i = v.as_i64().map_err(number_error)?;
+                i32::try_from(i).map_err(|_| JsonError::value(JsonErrorKind::InvalidCast))
             }
             o => Err(type_mismatch(o, ExpectedJsonType::Number)),
         }
     }
 
-    fn try_as_float(&self) -> Result<f32, Self::ErrorType> {
+    fn try_as_float(&self) -> Result<f64, Self::ErrorType> {
         match self {
-            JsonValue::Number(v) => Ok(*v),
+            JsonValue::Number(v) => v.as_f64().map_err(number_error),
             o => Err(type_mismatch(o, ExpectedJsonType::Number)),
+        }
+    }
+}
+
+fn number_error(err: NumberError) -> JsonError {
+    match err {
+        NumberError::NotInteger | NumberError::OutOfRange | NumberError::Invalid => {
+            JsonError::value(JsonErrorKind::InvalidCast)
         }
     }
 }

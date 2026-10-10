@@ -56,7 +56,7 @@ pub enum JqlAstNode<'a> {
     },
 
     // Operand node
-    Number(f32),
+    Number(f64),
     String(&'a str),
     Boolean(bool),
     Null,
@@ -113,7 +113,7 @@ impl<'a> JqlAstNode<'a> {
                 source
                     .get(token.span.start..token.span.end)
                     .unwrap()
-                    .parse::<f32>()
+                    .parse::<f64>()
                     .unwrap(),
             ));
         }

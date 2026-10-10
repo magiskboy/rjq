@@ -1,3 +1,4 @@
+use crate::json::number::JsonNumber;
 use crate::{Location, Span};
 use std::borrow::Cow;
 use std::fmt::Display;
@@ -70,7 +71,7 @@ impl JsonTokenKind {
 pub enum JsonLexeme<'a> {
     None,
     String(Cow<'a, str>),
-    Number(f32),
+    Number(JsonNumber<'a>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -100,7 +101,7 @@ impl<'a> JsonToken<'a> {
         }
     }
 
-    pub fn number(span: Span, location: Location, value: f32) -> Self {
+    pub fn number(span: Span, location: Location, value: JsonNumber<'a>) -> Self {
         Self {
             kind: JsonTokenKind::Number,
             span,
@@ -126,7 +127,7 @@ impl<'t, 'a> Display for JsonTokenDisplay<'t, 'a> {
         let content = match &self.token.lexeme {
             JsonLexeme::None => "",
             JsonLexeme::String(s) => s.as_ref(),
-            JsonLexeme::Number(_) => "<number>",
+            JsonLexeme::Number(n) => n.raw(),
         };
         write!(
             f,

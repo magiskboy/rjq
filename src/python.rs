@@ -1,8 +1,11 @@
 use std::borrow::Cow;
+use std::ffi::CString;
+use std::ptr;
 
 use crate::json::{
-    builder::{JsonAtom, JsonBuilder, JsonNumberAtom},
+    builder::{JsonAtom, JsonBuilder},
     error::JsonError,
+    number::{NumberError, PyNumber},
     parser::JsonParser,
 };
 use pyo3::IntoPyObjectExt;
@@ -34,6 +37,12 @@ impl From<JsonError> for PyErr {
     }
 }
 
+impl From<NumberError> for PyErr {
+    fn from(err: NumberError) -> Self {
+        PyValueError::new_err(format!("invalid number: {err:?}"))
+    }
+}
+
 /// Builds CPython objects directly from parser atoms — no intermediate `JsonValue` tree.
 struct PyBuilder<'py> {
     py: Python<'py>,
@@ -42,6 +51,14 @@ struct PyBuilder<'py> {
 impl<'py> PyBuilder<'py> {
     fn new(py: Python<'py>) -> Self {
         Self { py }
+    }
+
+    fn py_long_from_string(&self, raw: &str) -> PyResult<Bound<'py, PyAny>> {
+        let cstr = CString::new(raw).map_err(|_| PyValueError::new_err("nul in number"))?;
+        unsafe {
+            let ptr = pyo3::ffi::PyLong_FromString(cstr.as_ptr(), ptr::null_mut(), 10);
+            Bound::from_owned_ptr_or_err(self.py, ptr).map(|b| b.into_any())
+        }
     }
 }
 
@@ -55,7 +72,11 @@ impl<'a, 'py> JsonBuilder<'a> for PyBuilder<'py> {
         match atom {
             JsonAtom::Null => Ok(self.py.None().into_bound(self.py)),
             JsonAtom::Bool(v) => v.into_bound_py_any(self.py),
-            JsonAtom::Number(JsonNumberAtom::F32(n)) => n.into_bound_py_any(self.py),
+            JsonAtom::Number(n) => match n.classify_py()? {
+                PyNumber::Int(i) => i.into_bound_py_any(self.py),
+                PyNumber::Float(f) => f.into_bound_py_any(self.py),
+                PyNumber::BigInt => self.py_long_from_string(n.raw()),
+            },
             JsonAtom::String(s) => Ok(PyString::new(self.py, s.as_ref()).into_any()),
         }
     }

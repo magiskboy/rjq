@@ -6,6 +6,7 @@ pub mod builder;
 pub mod error;
 pub(crate) mod escape;
 pub(crate) mod lexer;
+pub mod number;
 pub(crate) mod neon;
 pub(crate) mod parser;
 pub(crate) mod simd;
@@ -82,7 +83,7 @@ fn dump(
         JsonValue::Null => write!(writer, "null"),
         JsonValue::True => write!(writer, "true"),
         JsonValue::False => write!(writer, "false"),
-        JsonValue::Number(n) => write!(writer, "{}", n),
+        JsonValue::Number(n) => write!(writer, "{}", n.raw()),
         JsonValue::String(st) => write_json_string(writer, st.as_ref()),
         JsonValue::Array(items) => {
             write!(writer, "[")?;
