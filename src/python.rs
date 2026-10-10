@@ -1,59 +1,95 @@
-use crate::json::value::JsonValue;
+use std::borrow::Cow;
+
+use crate::json::{
+    builder::{JsonAtom, JsonBuilder, JsonNumberAtom},
+    error::JsonError,
+    parser::JsonParser,
+};
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::{
-    PyResult, pyfunction,
-    types::{PyAny, PyDict, PyList},
-};
+use pyo3::types::{PyDict, PyList, PyString};
+use pyo3::{Bound, PyAny, Python};
 
 #[pymodule]
 mod rjson {
     use super::*;
 
     #[pyfunction]
-    fn rjson_load(py: Python<'_>, data: Vec<u8>) -> PyResult<Bound<'_, PyAny>> {
-        use crate::json::json_load_slice;
-        let json = json_load_slice(&data).map_err(|err| PyValueError::new_err(err.to_string()))?;
-        jsonvalue2py(&json, py)
+    fn rjson_load<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyAny>> {
+        let mut builder = PyBuilder::new(py);
+        JsonParser::parse_slice_with(data, &mut builder)
     }
 
     #[pyfunction]
-    fn rjson_loads(py: Python<'_>, string: String) -> PyResult<Bound<'_, PyAny>> {
-        use crate::json::json_load_str;
-        let json = json_load_str(&string).map_err(|err| PyValueError::new_err(err.to_string()))?;
-        jsonvalue2py(&json, py)
+    fn rjson_loads<'py>(py: Python<'py>, string: &str) -> PyResult<Bound<'py, PyAny>> {
+        let mut builder = PyBuilder::new(py);
+        JsonParser::parse_str_with(string, &mut builder)
     }
 }
 
-fn jsonvalue2py<'a>(json: &JsonValue<'_>, py: Python<'a>) -> PyResult<Bound<'a, PyAny>> {
-    match json {
-        JsonValue::Null => Ok(py.None().into_bound(py)),
-        JsonValue::True => true.into_bound_py_any(py),
-        JsonValue::False => false.into_bound_py_any(py),
-        JsonValue::Number(v) => v.into_bound_py_any(py),
-        JsonValue::String(v) => v.as_ref().into_bound_py_any(py),
-        JsonValue::Array(items) => {
-            let pylist = PyList::empty(py);
-            for item in items {
-                if let Ok(r) = jsonvalue2py(item, py) {
-                    pylist.append(r)?;
-                } else {
-                    return Err(PyValueError::new_err("expected array"));
-                }
-            }
-            Ok(pylist.into_any())
+impl From<JsonError> for PyErr {
+    fn from(err: JsonError) -> Self {
+        PyValueError::new_err(err.to_string())
+    }
+}
+
+/// Builds CPython objects directly from parser atoms — no intermediate `JsonValue` tree.
+struct PyBuilder<'py> {
+    py: Python<'py>,
+}
+
+impl<'py> PyBuilder<'py> {
+    fn new(py: Python<'py>) -> Self {
+        Self { py }
+    }
+}
+
+impl<'a, 'py> JsonBuilder<'a> for PyBuilder<'py> {
+    type Value = Bound<'py, PyAny>;
+    type Array = Bound<'py, PyList>;
+    type Object = Bound<'py, PyDict>;
+    type Error = PyErr;
+
+    fn atom(&mut self, atom: JsonAtom<'a>) -> Result<Self::Value, Self::Error> {
+        match atom {
+            JsonAtom::Null => Ok(self.py.None().into_bound(self.py)),
+            JsonAtom::Bool(v) => v.into_bound_py_any(self.py),
+            JsonAtom::Number(JsonNumberAtom::F32(n)) => n.into_bound_py_any(self.py),
+            JsonAtom::String(s) => Ok(PyString::new(self.py, s.as_ref()).into_any()),
         }
-        JsonValue::Object(o) => {
-            let pydict = PyDict::new(py);
-            for (k, v) in o.iter() {
-                if let Ok(r) = jsonvalue2py(v, py) {
-                    pydict.set_item(k.as_ref(), r)?;
-                } else {
-                    return Err(PyValueError::new_err("expected object"));
-                }
-            }
-            Ok(pydict.into_any())
-        }
+    }
+
+    fn begin_array(&mut self) -> Result<Self::Array, Self::Error> {
+        Ok(PyList::empty(self.py))
+    }
+
+    fn array_push(
+        &mut self,
+        array: &mut Self::Array,
+        value: Self::Value,
+    ) -> Result<(), Self::Error> {
+        array.append(value)
+    }
+
+    fn end_array(&mut self, array: Self::Array) -> Result<Self::Value, Self::Error> {
+        Ok(array.into_any())
+    }
+
+    fn begin_object(&mut self) -> Result<Self::Object, Self::Error> {
+        Ok(PyDict::new(self.py))
+    }
+
+    fn object_insert(
+        &mut self,
+        object: &mut Self::Object,
+        key: Cow<'a, str>,
+        value: Self::Value,
+    ) -> Result<(), Self::Error> {
+        object.set_item(key.as_ref(), value)
+    }
+
+    fn end_object(&mut self, object: Self::Object) -> Result<Self::Value, Self::Error> {
+        Ok(object.into_any())
     }
 }

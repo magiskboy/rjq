@@ -2,6 +2,7 @@ use std::io::Read;
 
 use crate::json::{error::JsonError, parser::JsonParser, value::JsonValue};
 
+pub mod builder;
 pub mod error;
 pub(crate) mod escape;
 pub(crate) mod lexer;

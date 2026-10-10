@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use crate::json::{
     error::{JsonError, JsonErrorKind},
-    escape::{ESCAPE_TOKENS, MUST_BE_ESCAPED, UnescapeError, unescape_json_string},
+    escape::{UnescapeError, is_escape_token, must_be_escaped, unescape_json_string},
     source::SliceCursor,
     token::{JsonToken, JsonTokenKind},
 };
@@ -354,12 +354,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn must_be_escaped(ch: char) -> bool {
-        let mut buf = [0u8; 4];
-        let encoded: &str = ch.encode_utf8(&mut buf);
-        MUST_BE_ESCAPED.contains(&encoded)
-    }
-
     fn peek_bytes(&self, len: usize) -> Option<&'a [u8]> {
         self.source.peek_bytes(len)
     }
@@ -413,7 +407,7 @@ impl<'a> Lexer<'a> {
                 let esc_pos = self.source.position();
                 if let Some(bytes) = self.peek_bytes(2) {
                     if let Ok(escape) = std::str::from_utf8(bytes) {
-                        if ESCAPE_TOKENS.contains(&escape) {
+                        if is_escape_token(&escape) {
                             self.source.bump_char();
                             self.source.bump_char();
                             continue;
@@ -431,10 +425,8 @@ impl<'a> Lexer<'a> {
                     }
                 }
 
-                let starts_u = self
-                    .peek_bytes(2)
-                    .and_then(|b| std::str::from_utf8(b).ok())
-                    == Some("\\u");
+                let starts_u =
+                    self.peek_bytes(2).and_then(|b| std::str::from_utf8(b).ok()) == Some("\\u");
                 if starts_u {
                     let end = (esc_pos + 6).min(self.source.buffered_end().max(esc_pos + 2));
                     return Err(self.error_at(
@@ -465,7 +457,7 @@ impl<'a> Lexer<'a> {
                     Cow::Borrowed(raw)
                 };
                 return Ok(JsonToken::string(span, start_loc, value));
-            } else if Self::must_be_escaped(c) {
+            } else if must_be_escaped(c) {
                 self.source.bump_char();
                 return Err(self.error_at(
                     JsonErrorKind::UnescapedControl,

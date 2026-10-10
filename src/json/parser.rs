@@ -1,11 +1,10 @@
-use std::borrow::Cow;
-use std::collections::HashMap;
 use std::io::Read;
 use std::mem;
 
 use crate::Location;
 use crate::Span;
 use crate::json::{
+    builder::{JsonAtom, JsonBuilder, JsonNumberAtom, JsonValueBuilder},
     error::{ExpectedSyntax, JsonError, JsonErrorKind},
     lexer::Lexer,
     token::{JsonLexeme, JsonToken, JsonTokenKind},
@@ -21,14 +20,31 @@ pub struct JsonParser<'a> {
 
 impl<'a> JsonParser<'a> {
     pub fn parse_slice(data: &'a [u8]) -> Result<JsonValue<'a>, JsonError> {
-        Self::from_lexer(Lexer::from_slice(data))
+        Self::parse_slice_with(data, &mut JsonValueBuilder)
     }
 
     pub fn parse_str(source: &'a str) -> Result<JsonValue<'a>, JsonError> {
         Self::parse_slice(source.as_bytes())
     }
 
-    fn from_lexer(mut lexer: Lexer<'a>) -> Result<JsonValue<'a>, JsonError> {
+    pub fn parse_slice_with<B: JsonBuilder<'a>>(
+        data: &'a [u8],
+        builder: &mut B,
+    ) -> Result<B::Value, B::Error> {
+        Self::from_lexer(Lexer::from_slice(data), builder)
+    }
+
+    pub fn parse_str_with<B: JsonBuilder<'a>>(
+        source: &'a str,
+        builder: &mut B,
+    ) -> Result<B::Value, B::Error> {
+        Self::parse_slice_with(source.as_bytes(), builder)
+    }
+
+    fn from_lexer<B: JsonBuilder<'a>>(
+        mut lexer: Lexer<'a>,
+        builder: &mut B,
+    ) -> Result<B::Value, B::Error> {
         let first = loop {
             let pos_before = lexer.position();
             let token = lexer.next_token()?;
@@ -45,7 +61,8 @@ impl<'a> JsonParser<'a> {
                             end: pos_before,
                         },
                         Location { line: 1, column: 1 },
-                    ));
+                    )
+                    .into());
                 }
                 _ => {
                     lexer.discard_consumed();
@@ -59,7 +76,7 @@ impl<'a> JsonParser<'a> {
             current: first,
             lexer,
         };
-        let value = parser.parse_value()?;
+        let value = parser.parse_value(builder)?;
         parser.expect_eof()?;
         Ok(value)
     }
@@ -133,29 +150,53 @@ impl<'a> JsonParser<'a> {
         Ok(token)
     }
 
-    fn parse_object(&mut self) -> Result<JsonValue<'a>, JsonError> {
+    fn parse_object<B: JsonBuilder<'a>>(
+        &mut self,
+        builder: &mut B,
+    ) -> Result<B::Value, B::Error> {
         self.expect(JsonTokenKind::LBrace)?;
+        let mut object = builder.begin_object()?;
         if self.current.kind == JsonTokenKind::RBrace {
             self.bump()?;
-            return Ok(JsonValue::empty_object());
+            return builder.end_object(object);
         }
 
-        let mut members: Vec<(Cow<'a, str>, JsonValue<'a>)> = vec![];
         loop {
             if self.current.kind != JsonTokenKind::String {
                 if self.current.kind == JsonTokenKind::Stop {
-                    return Err(self.eof_error(ExpectedSyntax::Token(JsonTokenKind::RBrace)));
+                    return Err(self
+                        .eof_error(ExpectedSyntax::Token(JsonTokenKind::RBrace))
+                        .into());
                 }
-                return Err(self.unexpected(ExpectedSyntax::Token(JsonTokenKind::String)));
+                return Err(self
+                    .unexpected(ExpectedSyntax::Token(JsonTokenKind::String))
+                    .into());
             }
 
-            members.push(self.parse_pair()?);
+            let key_token = self.expect(JsonTokenKind::String)?;
+            let key = match key_token.lexeme {
+                JsonLexeme::String(s) => s,
+                _ => {
+                    return Err(self
+                        .error(
+                            JsonErrorKind::InvalidEscape,
+                            key_token.span,
+                            key_token.location,
+                        )
+                        .into());
+                }
+            };
+            self.expect(JsonTokenKind::Colon)?;
+            let value = self.parse_value(builder)?;
+            builder.object_insert(&mut object, key, value)?;
 
             match self.current.kind {
                 JsonTokenKind::Comma => {
                     self.bump()?;
                     if self.current.kind == JsonTokenKind::RBrace {
-                        return Err(self.unexpected(ExpectedSyntax::Token(JsonTokenKind::String)));
+                        return Err(self
+                            .unexpected(ExpectedSyntax::Token(JsonTokenKind::String))
+                            .into());
                     }
                     continue;
                 }
@@ -164,59 +205,50 @@ impl<'a> JsonParser<'a> {
                     break;
                 }
                 JsonTokenKind::Stop => {
-                    return Err(self.eof_error(ExpectedSyntax::Token(JsonTokenKind::RBrace)));
+                    return Err(self
+                        .eof_error(ExpectedSyntax::Token(JsonTokenKind::RBrace))
+                        .into());
                 }
                 _ => {
-                    return Err(self.unexpected(ExpectedSyntax::Token(JsonTokenKind::RBrace)));
+                    return Err(self
+                        .unexpected(ExpectedSyntax::Token(JsonTokenKind::RBrace))
+                        .into());
                 }
             }
         }
 
-        Ok(JsonValue::object(HashMap::<Cow<'a, str>, JsonValue<'a>>::from_iter(
-            members.into_iter(),
-        )))
+        builder.end_object(object)
     }
 
-    fn parse_pair(&mut self) -> Result<(Cow<'a, str>, JsonValue<'a>), JsonError> {
-        let key_token = self.expect(JsonTokenKind::String)?;
-        let key = match key_token.lexeme {
-            JsonLexeme::String(s) => s,
-            _ => {
-                return Err(self.error(
-                    JsonErrorKind::InvalidEscape,
-                    key_token.span,
-                    key_token.location,
-                ));
-            }
-        };
-        self.expect(JsonTokenKind::Colon)?;
-        let value = self.parse_value()?;
-        Ok((key, value))
-    }
-
-    fn parse_array(&mut self) -> Result<JsonValue<'a>, JsonError> {
+    fn parse_array<B: JsonBuilder<'a>>(
+        &mut self,
+        builder: &mut B,
+    ) -> Result<B::Value, B::Error> {
         self.expect(JsonTokenKind::LBracket)?;
+        let mut array = builder.begin_array()?;
         if self.current.kind == JsonTokenKind::RBracket {
             self.bump()?;
-            return Ok(JsonValue::array(vec![]));
+            return builder.end_array(array);
         }
 
-        let mut items: Vec<JsonValue<'a>> = vec![];
         loop {
             if !Self::starts_value(&self.current.kind) {
                 if self.current.kind == JsonTokenKind::Stop {
-                    return Err(self.eof_error(ExpectedSyntax::Token(JsonTokenKind::RBracket)));
+                    return Err(self
+                        .eof_error(ExpectedSyntax::Token(JsonTokenKind::RBracket))
+                        .into());
                 }
-                return Err(self.unexpected(ExpectedSyntax::Value));
+                return Err(self.unexpected(ExpectedSyntax::Value).into());
             }
 
-            items.push(self.parse_value()?);
+            let value = self.parse_value(builder)?;
+            builder.array_push(&mut array, value)?;
 
             match self.current.kind {
                 JsonTokenKind::Comma => {
                     self.bump()?;
                     if self.current.kind == JsonTokenKind::RBracket {
-                        return Err(self.unexpected(ExpectedSyntax::Value));
+                        return Err(self.unexpected(ExpectedSyntax::Value).into());
                     }
                     continue;
                 }
@@ -225,30 +257,37 @@ impl<'a> JsonParser<'a> {
                     break;
                 }
                 JsonTokenKind::Stop => {
-                    return Err(self.eof_error(ExpectedSyntax::Token(JsonTokenKind::RBracket)));
+                    return Err(self
+                        .eof_error(ExpectedSyntax::Token(JsonTokenKind::RBracket))
+                        .into());
                 }
                 _ => {
-                    return Err(self.unexpected(ExpectedSyntax::Token(JsonTokenKind::RBracket)));
+                    return Err(self
+                        .unexpected(ExpectedSyntax::Token(JsonTokenKind::RBracket))
+                        .into());
                 }
             }
         }
 
-        Ok(JsonValue::array(items))
+        builder.end_array(array)
     }
 
-    fn parse_value(&mut self) -> Result<JsonValue<'a>, JsonError> {
+    fn parse_value<B: JsonBuilder<'a>>(
+        &mut self,
+        builder: &mut B,
+    ) -> Result<B::Value, B::Error> {
         match self.current.kind {
             JsonTokenKind::Null => {
                 self.bump()?;
-                Ok(JsonValue::null())
+                builder.atom(JsonAtom::Null)
             }
             JsonTokenKind::True => {
                 self.bump()?;
-                Ok(JsonValue::boolean(true))
+                builder.atom(JsonAtom::Bool(true))
             }
             JsonTokenKind::False => {
                 self.bump()?;
-                Ok(JsonValue::boolean(false))
+                builder.atom(JsonAtom::Bool(false))
             }
             JsonTokenKind::String => {
                 let span = self.current.span;
@@ -256,8 +295,10 @@ impl<'a> JsonParser<'a> {
                 let lexeme = mem::replace(&mut self.current.lexeme, JsonLexeme::None);
                 self.bump()?;
                 match lexeme {
-                    JsonLexeme::String(s) => Ok(JsonValue::string(s)),
-                    _ => Err(self.error(JsonErrorKind::InvalidEscape, span, location)),
+                    JsonLexeme::String(s) => builder.atom(JsonAtom::String(s)),
+                    _ => Err(self
+                        .error(JsonErrorKind::InvalidEscape, span, location)
+                        .into()),
                 }
             }
             JsonTokenKind::Number => {
@@ -266,14 +307,18 @@ impl<'a> JsonParser<'a> {
                 let lexeme = mem::replace(&mut self.current.lexeme, JsonLexeme::None);
                 self.bump()?;
                 match lexeme {
-                    JsonLexeme::Number(n) => Ok(JsonValue::number(n)),
-                    _ => Err(self.error(JsonErrorKind::InvalidNumber, span, location)),
+                    JsonLexeme::Number(n) => {
+                        builder.atom(JsonAtom::Number(JsonNumberAtom::F32(n)))
+                    }
+                    _ => Err(self
+                        .error(JsonErrorKind::InvalidNumber, span, location)
+                        .into()),
                 }
             }
-            JsonTokenKind::LBracket => self.parse_array(),
-            JsonTokenKind::LBrace => self.parse_object(),
-            JsonTokenKind::Stop => Err(self.eof_error(ExpectedSyntax::Value)),
-            _ => Err(self.unexpected(ExpectedSyntax::Value)),
+            JsonTokenKind::LBracket => self.parse_array(builder),
+            JsonTokenKind::LBrace => self.parse_object(builder),
+            JsonTokenKind::Stop => Err(self.eof_error(ExpectedSyntax::Value).into()),
+            _ => Err(self.unexpected(ExpectedSyntax::Value).into()),
         }
     }
 
