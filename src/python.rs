@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::ptr;
 
@@ -12,7 +13,7 @@ use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString};
-use pyo3::{Bound, PyAny, Python};
+use pyo3::{Bound, Py, PyAny, Python};
 
 #[pymodule]
 mod rjson {
@@ -46,11 +47,16 @@ impl From<NumberError> for PyErr {
 /// Builds CPython objects directly from parser atoms — no intermediate `JsonValue` tree.
 struct PyBuilder<'py> {
     py: Python<'py>,
+    /// Object-key intern table for this parse: one `PyString` per distinct key text.
+    key_cache: HashMap<Box<str>, Py<PyString>>,
 }
 
 impl<'py> PyBuilder<'py> {
     fn new(py: Python<'py>) -> Self {
-        Self { py }
+        Self {
+            py,
+            key_cache: HashMap::new(),
+        }
     }
 
     fn py_long_from_string(&self, raw: &str) -> PyResult<Bound<'py, PyAny>> {
@@ -59,6 +65,17 @@ impl<'py> PyBuilder<'py> {
             let ptr = pyo3::ffi::PyLong_FromString(cstr.as_ptr(), ptr::null_mut(), 10);
             Bound::from_owned_ptr_or_err(self.py, ptr).map(|b| b.into_any())
         }
+    }
+
+    fn intern_key(&mut self, key: &str) -> PyResult<Py<PyString>> {
+        if let Some(cached) = self.key_cache.get(key) {
+            return Ok(cached.clone_ref(self.py));
+        }
+        let py_str = PyString::new(self.py, key);
+        let owned: Py<PyString> = py_str.unbind();
+        self.key_cache
+            .insert(key.into(), owned.clone_ref(self.py));
+        Ok(owned)
     }
 }
 
@@ -107,7 +124,8 @@ impl<'a, 'py> JsonBuilder<'a> for PyBuilder<'py> {
         key: Cow<'a, str>,
         value: Self::Value,
     ) -> Result<(), Self::Error> {
-        object.set_item(key.as_ref(), value)
+        let py_key = self.intern_key(key.as_ref())?;
+        object.set_item(py_key.bind(self.py), value)
     }
 
     fn end_object(&mut self, object: Self::Object) -> Result<Self::Value, Self::Error> {
