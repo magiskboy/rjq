@@ -1,68 +1,38 @@
-//! AVX2 byte-scan helpers for `x86_64` JSON lexer hot paths.
+//! AVX2 byte-scan backend for `x86_64`.
 //!
-//! Runtime-detects AVX2. On other architectures (or CPUs without AVX2),
-//! callers should keep the scalar char-by-char path. See [`super::neon`] for
-//! the Apple Silicon / AArch64 counterpart.
+//! Runtime-detects AVX2; falls back to [`super::scalar`] when unavailable or
+//! for the sub-32-byte tail. Mirrors [`super::neon`] (AArch64 counterpart).
+
+use super::scalar;
 
 /// True when AVX2 vectorized byte scan is available on this CPU/process.
 #[inline]
 pub fn is_available() -> bool {
-    #[cfg(target_arch = "x86_64")]
-    {
-        return std::is_x86_feature_detected!("avx2");
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        false
-    }
+    std::is_x86_feature_detected!("avx2")
 }
 
-/// Index of the first JSON string "special" byte in `haystack`, or `None` if
-/// every byte is safe unescaped content.
-///
-/// A special byte is `"`, `\`, or a control byte (`< 0x20`).
-///
-/// Pure over the given slice. Caller should only invoke this when
-/// [`is_available`] is true; scalar exists for tests and vectorized tails.
+/// See [`super::scalar::find_string_special`].
 #[inline]
 pub fn find_string_special(haystack: &[u8]) -> Option<usize> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if std::is_x86_feature_detected!("avx2") {
-            return unsafe { find_string_special_avx2(haystack) };
-        }
+    if is_available() {
+        // SAFETY: guarded by runtime AVX2 detection.
+        unsafe { find_string_special_avx2(haystack) }
+    } else {
+        scalar::find_string_special(haystack)
     }
-    find_string_special_scalar(haystack)
 }
 
-/// Index of the first non-JSON-whitespace byte (`space` / `\t` / `\n` / `\r`),
-/// or `None` if the whole slice is whitespace.
+/// See [`super::scalar::find_non_whitespace`].
 #[inline]
 pub fn find_non_whitespace(haystack: &[u8]) -> Option<usize> {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if std::is_x86_feature_detected!("avx2") {
-            return unsafe { find_non_whitespace_avx2(haystack) };
-        }
+    if is_available() {
+        // SAFETY: guarded by runtime AVX2 detection.
+        unsafe { find_non_whitespace_avx2(haystack) }
+    } else {
+        scalar::find_non_whitespace(haystack)
     }
-    find_non_whitespace_scalar(haystack)
 }
 
-#[inline]
-pub(crate) fn find_string_special_scalar(haystack: &[u8]) -> Option<usize> {
-    haystack
-        .iter()
-        .position(|&b| b == b'"' || b == b'\\' || b < 0x20)
-}
-
-#[inline]
-pub(crate) fn find_non_whitespace_scalar(haystack: &[u8]) -> Option<usize> {
-    haystack
-        .iter()
-        .position(|&b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
-}
-
-#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn find_string_special_avx2(haystack: &[u8]) -> Option<usize> {
     use std::arch::x86_64::*;
@@ -87,10 +57,9 @@ unsafe fn find_string_special_avx2(haystack: &[u8]) -> Option<usize> {
         offset += 32;
     }
 
-    find_string_special_scalar(&haystack[offset..]).map(|i| offset + i)
+    scalar::find_string_special(&haystack[offset..]).map(|i| offset + i)
 }
 
-#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn find_non_whitespace_avx2(haystack: &[u8]) -> Option<usize> {
     use std::arch::x86_64::*;
@@ -115,21 +84,12 @@ unsafe fn find_non_whitespace_avx2(haystack: &[u8]) -> Option<usize> {
         offset += 32;
     }
 
-    find_non_whitespace_scalar(&haystack[offset..]).map(|i| offset + i)
+    scalar::find_non_whitespace(&haystack[offset..]).map(|i| offset + i)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn string_special_finds_quote_backslash_control() {
-        assert_eq!(find_string_special_scalar(b"abc"), None);
-        assert_eq!(find_string_special_scalar(b"ab\"c"), Some(2));
-        assert_eq!(find_string_special_scalar(b"a\\b"), Some(1));
-        assert_eq!(find_string_special_scalar(b"ab\n"), Some(2));
-        assert_eq!(find_string_special_scalar(b"\txyz"), Some(0));
-    }
 
     #[test]
     fn string_special_dispatch_matches_scalar() {
@@ -147,7 +107,7 @@ mod tests {
         for s in samples {
             assert_eq!(
                 find_string_special(s),
-                find_string_special_scalar(s),
+                scalar::find_string_special(s),
                 "mismatch on {s:?}"
             );
         }
@@ -170,21 +130,14 @@ mod tests {
         for s in samples {
             assert_eq!(
                 find_non_whitespace(s),
-                find_non_whitespace_scalar(s),
+                scalar::find_non_whitespace(s),
                 "mismatch on {s:?}"
             );
         }
     }
 
     #[test]
-    fn available_only_with_avx2_on_x86() {
-        #[cfg(target_arch = "x86_64")]
-        {
-            assert_eq!(is_available(), std::is_x86_feature_detected!("avx2"));
-        }
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            assert!(!is_available());
-        }
+    fn available_matches_cpu_feature() {
+        assert_eq!(is_available(), std::is_x86_feature_detected!("avx2"));
     }
 }

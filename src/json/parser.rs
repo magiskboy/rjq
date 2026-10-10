@@ -34,6 +34,7 @@ impl<'a> JsonParser<'a> {
         Self::from_lexer(Lexer::from_slice(data), builder)
     }
 
+    #[cfg_attr(not(feature = "python"), allow(dead_code))]
     pub fn parse_str_with<B: JsonBuilder<'a>>(
         source: &'a str,
         builder: &mut B,
@@ -92,7 +93,8 @@ impl JsonParser<'_> {
 }
 
 impl<'a> JsonParser<'a> {
-    fn error(&self, kind: JsonErrorKind, span: Span, location: Location) -> JsonError {
+    fn error(&self, kind: JsonErrorKind, span: Span) -> JsonError {
+        let location = self.lexer.location_at(span.start);
         JsonError::at(kind, span, location)
     }
 
@@ -106,11 +108,7 @@ impl<'a> JsonParser<'a> {
 
     fn expect_eof(&mut self) -> Result<(), JsonError> {
         if self.current.kind != JsonTokenKind::Stop {
-            return Err(self.error(
-                JsonErrorKind::TrailingInput,
-                self.current.span,
-                self.current.location,
-            ));
+            return Err(self.error(JsonErrorKind::TrailingInput, self.current.span));
         }
         Ok(())
     }
@@ -122,7 +120,6 @@ impl<'a> JsonParser<'a> {
                 start: self.last_end,
                 end: self.last_end,
             },
-            self.lexer.location(),
         )
     }
 
@@ -137,14 +134,9 @@ impl<'a> JsonParser<'a> {
                     found: self.current.kind.clone(),
                 },
                 self.current.span,
-                self.current.location,
             ));
         }
-        let placeholder = JsonToken::simple(
-            JsonTokenKind::Stop,
-            self.current.span,
-            self.current.location,
-        );
+        let placeholder = JsonToken::simple(JsonTokenKind::Stop, self.current.span);
         let token = mem::replace(&mut self.current, placeholder);
         self.bump()?;
         Ok(token)
@@ -178,11 +170,7 @@ impl<'a> JsonParser<'a> {
                 JsonLexeme::String(s) => s,
                 _ => {
                     return Err(self
-                        .error(
-                            JsonErrorKind::InvalidEscape,
-                            key_token.span,
-                            key_token.location,
-                        )
+                        .error(JsonErrorKind::InvalidEscape, key_token.span)
                         .into());
                 }
             };
@@ -291,26 +279,20 @@ impl<'a> JsonParser<'a> {
             }
             JsonTokenKind::String => {
                 let span = self.current.span;
-                let location = self.current.location;
                 let lexeme = mem::replace(&mut self.current.lexeme, JsonLexeme::None);
                 self.bump()?;
                 match lexeme {
                     JsonLexeme::String(s) => builder.atom(JsonAtom::String(s)),
-                    _ => Err(self
-                        .error(JsonErrorKind::InvalidEscape, span, location)
-                        .into()),
+                    _ => Err(self.error(JsonErrorKind::InvalidEscape, span).into()),
                 }
             }
             JsonTokenKind::Number => {
                 let span = self.current.span;
-                let location = self.current.location;
                 let lexeme = mem::replace(&mut self.current.lexeme, JsonLexeme::None);
                 self.bump()?;
                 match lexeme {
                     JsonLexeme::Number(n) => builder.atom(JsonAtom::Number(n)),
-                    _ => Err(self
-                        .error(JsonErrorKind::InvalidNumber, span, location)
-                        .into()),
+                    _ => Err(self.error(JsonErrorKind::InvalidNumber, span).into()),
                 }
             }
             JsonTokenKind::LBracket => self.parse_array(builder),
@@ -327,7 +309,6 @@ impl<'a> JsonParser<'a> {
                 found: self.current.kind.clone(),
             },
             self.current.span,
-            self.current.location,
         )
     }
 

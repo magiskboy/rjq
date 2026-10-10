@@ -1,5 +1,5 @@
+use crate::Span;
 use crate::json::number::JsonNumber;
-use crate::{Location, Span};
 use std::borrow::Cow;
 use std::fmt::Display;
 
@@ -17,7 +17,6 @@ pub enum JsonTokenKind {
     Colon,
     Comma,
     Whitespace,
-    InvalidToken,
     Stop,
 }
 
@@ -36,7 +35,6 @@ impl Display for JsonTokenKind {
             JsonTokenKind::Colon => write!(f, "Colon"),
             JsonTokenKind::Comma => write!(f, "Comma"),
             JsonTokenKind::Whitespace => write!(f, "Whitespace"),
-            JsonTokenKind::InvalidToken => write!(f, "InvalidToken"),
             JsonTokenKind::Stop => write!(f, "Stop"),
         }
     }
@@ -57,7 +55,6 @@ impl JsonTokenKind {
             JsonTokenKind::Colon => "':'",
             JsonTokenKind::Comma => "','",
             JsonTokenKind::Whitespace => "whitespace",
-            JsonTokenKind::InvalidToken => "invalid",
             JsonTokenKind::Stop => "end",
         }
     }
@@ -74,38 +71,37 @@ pub enum JsonLexeme<'a> {
     Number(JsonNumber<'a>),
 }
 
+/// A lexed token. Carries only a byte [`Span`]; 1-based line/column is derived
+/// lazily from the source at error-reporting time (see `Lexer::location_at`),
+/// keeping the lex/parse hot path free of per-byte position bookkeeping.
 #[derive(Debug, Clone, PartialEq)]
 pub struct JsonToken<'a> {
     pub kind: JsonTokenKind,
     pub span: Span,
-    pub location: Location,
     pub lexeme: JsonLexeme<'a>,
 }
 
 impl<'a> JsonToken<'a> {
-    pub fn simple(kind: JsonTokenKind, span: Span, location: Location) -> Self {
+    pub fn simple(kind: JsonTokenKind, span: Span) -> Self {
         Self {
             kind,
             span,
-            location,
             lexeme: JsonLexeme::None,
         }
     }
 
-    pub fn string(span: Span, location: Location, value: Cow<'a, str>) -> Self {
+    pub fn string(span: Span, value: Cow<'a, str>) -> Self {
         Self {
             kind: JsonTokenKind::String,
             span,
-            location,
             lexeme: JsonLexeme::String(value),
         }
     }
 
-    pub fn number(span: Span, location: Location, value: JsonNumber<'a>) -> Self {
+    pub fn number(span: Span, value: JsonNumber<'a>) -> Self {
         Self {
             kind: JsonTokenKind::Number,
             span,
-            location,
             lexeme: JsonLexeme::Number(value),
         }
     }

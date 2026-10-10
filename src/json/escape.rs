@@ -7,20 +7,6 @@ pub enum UnescapeError {
     UnescapedControlCharacter,
 }
 
-pub fn must_be_escaped(ch: char) -> bool {
-    match ch {
-        '"' | '\\' | '\u{0000}'..='\u{001F}' => true,
-        _ => false,
-    }
-}
-
-pub fn is_escape_token(tok: &str) -> bool {
-    match tok {
-        "\\\"" | "\\\\" | "\\/" | "\\b" | "\\f" | "\\n" | "\\r" | "\\t" => true,
-        _ => false,
-    }
-}
-
 pub fn unescape_json_string(input: &str) -> Result<String, UnescapeError> {
     let mut output = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();

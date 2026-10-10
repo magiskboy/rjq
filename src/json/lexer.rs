@@ -2,55 +2,37 @@ use std::borrow::Cow;
 
 use crate::json::{
     error::{JsonError, JsonErrorKind},
-    escape::{UnescapeError, is_escape_token, must_be_escaped, unescape_json_string},
-    number::{JsonNumber, JsonNumberKind},
+    escape::{UnescapeError, unescape_json_string},
+    number::{self, JsonNumber},
+    scan,
     source::SliceCursor,
     token::{JsonToken, JsonTokenKind},
 };
 use crate::{Location, Span};
 
-/// Arch-specific vectorized byte scan: AVX2 (`simd`) on x86_64, NEON on aarch64.
-mod vector_scan {
-    #[cfg(target_arch = "x86_64")]
-    pub use crate::json::simd::{find_non_whitespace, find_string_special, is_available};
+// Hot-path invariants (keep these true for any future optimization, incl. P2):
+//   1. Advancing the cursor is O(1): never scan per byte to track line/column.
+//      Line/column is derived lazily from a byte offset only when building an
+//      error (see `error_at` / `SliceCursor::location_at`).
+//   2. Un-escaped string lexemes borrow the input slice (`Cow::Borrowed`) for
+//      zero-copy; the cursor never discards consumed bytes.
+//   3. SIMD byte scanning lives in `crate::json::scan`; `scan::scalar` is the
+//      semantic spec that every SIMD backend must match.
+// TODO(P2): document the fused-scalar/number-scan invariants here once P2 lands.
 
-    #[cfg(target_arch = "aarch64")]
-    pub use crate::json::neon::{find_non_whitespace, find_string_special, is_available};
-
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    pub fn is_available() -> bool {
-        false
-    }
-
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    pub fn find_string_special(_haystack: &[u8]) -> Option<usize> {
-        None
-    }
-
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    pub fn find_non_whitespace(_haystack: &[u8]) -> Option<usize> {
-        None
-    }
+/// True for the escape character following a backslash in a two-char escape
+/// (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`).
+#[inline]
+fn is_escape_byte(b: u8) -> bool {
+    matches!(
+        b,
+        b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't'
+    )
 }
 
 #[derive(Debug)]
 pub struct Lexer<'a> {
     source: SliceCursor<'a>,
-}
-
-// support -1.2e-3
-#[derive(Debug, Clone, Eq, PartialEq)]
-enum ParseNumberState {
-    Start,
-    Signed,
-    Integer,
-    StartDecimal,
-    InDecimal,
-    StartExp, // at E or e
-    ExpSign,
-    ExpValue,
-    OnError,
-    OnSeparator,
 }
 
 impl<'a> Lexer<'a> {
@@ -85,56 +67,56 @@ impl<'a> Lexer<'a> {
         self.source.position()
     }
 
-    pub fn location(&self) -> Location {
-        self.source.location()
+    /// 1-based line/column for an absolute byte offset (error path only).
+    pub fn location_at(&self, byte: usize) -> Location {
+        self.source.location_at(byte)
     }
 
     pub fn discard_consumed(&mut self) {
-        // Slice-backed lexer never discards: borrowed string lexemes alias the input.
+        // Slice-backed lexer never discards: borrowed string lexemes alias the input, avoid dangle
     }
 
-    fn error_at(&self, kind: JsonErrorKind, span: Span, location: Location) -> JsonError {
+    /// Build an error, deriving line/column from the span start lazily.
+    fn error_at(&self, kind: JsonErrorKind, span: Span) -> JsonError {
+        let location = self.source.location_at(span.start);
         JsonError::at(kind, span, location)
     }
 
     pub fn next_token(&mut self) -> Result<JsonToken<'a>, JsonError> {
-        let start_loc = self.source.location();
         let pos = self.source.position();
 
-        let Some(c) = self.source.peek_char() else {
+        let Some(b) = self.source.peek_byte() else {
             return Ok(JsonToken::simple(
                 JsonTokenKind::Stop,
                 Span {
                     start: pos,
                     end: pos + 1,
                 },
-                start_loc,
             ));
         };
 
-        match c {
-            '{' => self.bump_simple(JsonTokenKind::LBrace),
-            '}' => self.bump_simple(JsonTokenKind::RBrace),
-            '[' => self.bump_simple(JsonTokenKind::LBracket),
-            ']' => self.bump_simple(JsonTokenKind::RBracket),
-            ':' => self.bump_simple(JsonTokenKind::Colon),
-            ',' => self.bump_simple(JsonTokenKind::Comma),
-            ' ' | '\n' | '\r' | '\t' => self.bump_whitespace(start_loc),
-            '"' => self.parse_string(start_loc),
-            't' => self.parse_literal(JsonTokenKind::True, "true", start_loc),
-            'f' => self.parse_literal(JsonTokenKind::False, "false", start_loc),
-            'n' => self.parse_literal(JsonTokenKind::Null, "null", start_loc),
-            '0'..='9' | '-' => self.parse_number(start_loc),
+        match b {
+            b'{' => self.bump_simple(JsonTokenKind::LBrace),
+            b'}' => self.bump_simple(JsonTokenKind::RBrace),
+            b'[' => self.bump_simple(JsonTokenKind::LBracket),
+            b']' => self.bump_simple(JsonTokenKind::RBracket),
+            b':' => self.bump_simple(JsonTokenKind::Colon),
+            b',' => self.bump_simple(JsonTokenKind::Comma),
+            b' ' | b'\n' | b'\r' | b'\t' => self.bump_whitespace(),
+            b'"' => self.parse_string(),
+            b't' => self.parse_literal(JsonTokenKind::True, "true"),
+            b'f' => self.parse_literal(JsonTokenKind::False, "false"),
+            b'n' => self.parse_literal(JsonTokenKind::Null, "null"),
+            b'0'..=b'9' | b'-' => self.parse_number(),
             _ => {
                 let start = self.source.position();
-                self.source.bump_char();
+                self.source.bump_n(1);
                 Err(self.error_at(
                     JsonErrorKind::InvalidCharacter,
                     Span {
                         start,
                         end: self.source.position(),
                     },
-                    start_loc,
                 ))
             }
         }
@@ -157,31 +139,29 @@ impl<'a> Lexer<'a> {
     }
 
     fn bump_simple(&mut self, kind: JsonTokenKind) -> Result<JsonToken<'a>, JsonError> {
-        let location = self.source.location();
         let start = self.source.position();
-        self.source.bump_char();
+        self.source.bump_n(1);
         Ok(JsonToken::simple(
             kind,
             Span {
                 start,
                 end: self.source.position(),
             },
-            location,
         ))
     }
 
     /// Consume a run of JSON whitespace. Uses AVX2/NEON byte-scan when available;
-    /// otherwise falls back to one-byte bumps (legacy path).
-    fn bump_whitespace(&mut self, start_loc: Location) -> Result<JsonToken<'a>, JsonError> {
+    /// otherwise falls back to a scalar byte loop.
+    fn bump_whitespace(&mut self) -> Result<JsonToken<'a>, JsonError> {
         let start = self.source.position();
 
-        if vector_scan::is_available() {
+        if scan::is_available() {
             loop {
                 let rem = self.source.remaining();
                 if rem.is_empty() {
                     break;
                 }
-                match vector_scan::find_non_whitespace(rem) {
+                match scan::find_non_whitespace(rem) {
                     Some(0) => break,
                     Some(idx) => {
                         self.source.bump_n(idx);
@@ -194,8 +174,13 @@ impl<'a> Lexer<'a> {
                 }
             }
         } else {
-            // Legacy: single whitespace byte (caller may loop via next_significant).
-            self.source.bump_char();
+            while let Some(b) = self.source.peek_byte() {
+                if matches!(b, b' ' | b'\t' | b'\n' | b'\r') {
+                    self.source.bump_n(1);
+                } else {
+                    break;
+                }
+            }
         }
 
         Ok(JsonToken::simple(
@@ -204,7 +189,6 @@ impl<'a> Lexer<'a> {
                 start,
                 end: self.source.position(),
             },
-            start_loc,
         ))
     }
 
@@ -212,41 +196,37 @@ impl<'a> Lexer<'a> {
         &mut self,
         token_type: JsonTokenKind,
         expected: &'static str,
-        start_loc: Location,
     ) -> Result<JsonToken<'a>, JsonError> {
         let start = self.source.position();
-        for ch in expected.chars() {
-            match self.source.peek_char() {
-                Some(c) if c == ch => {
-                    self.source.bump_char();
-                }
-                _ => {
-                    return Err(self.error_at(
-                        JsonErrorKind::InvalidLiteral { expected },
-                        Span {
-                            start,
-                            end: self
-                                .source
-                                .position()
-                                .max(start)
-                                .min(start + expected.len()),
-                        },
-                        start_loc,
-                    ));
-                }
-            }
+        let expected_bytes = expected.as_bytes();
+        let rem = self.source.remaining();
+
+        if !rem.starts_with(expected_bytes) {
+            let common = rem
+                .iter()
+                .zip(expected_bytes.iter())
+                .take_while(|(a, b)| *a == *b)
+                .count();
+            return Err(self.error_at(
+                JsonErrorKind::InvalidLiteral { expected },
+                Span {
+                    start,
+                    end: start + common,
+                },
+            ));
         }
 
+        self.source.bump_n(expected_bytes.len());
+
         // Literals must be complete tokens (not prefixes of identifiers).
-        if let Some(next) = self.source.peek_char() {
-            if next.is_ascii_alphanumeric() || next == '_' {
+        if let Some(next) = self.source.peek_byte() {
+            if next.is_ascii_alphanumeric() || next == b'_' {
                 return Err(self.error_at(
                     JsonErrorKind::InvalidLiteral { expected },
                     Span {
                         start,
                         end: self.source.position(),
                     },
-                    start_loc,
                 ));
             }
         }
@@ -257,117 +237,52 @@ impl<'a> Lexer<'a> {
                 start,
                 end: self.source.position(),
             },
-            start_loc,
         ))
     }
 
-    fn has_leading_zero(raw: &str) -> bool {
-        let int_part = raw.strip_prefix('-').unwrap_or(raw);
-        matches!(int_part.as_bytes(), [b'0', b'0'..=b'9', ..])
-    }
-
-    fn parse_number(&mut self, start_loc: Location) -> Result<JsonToken<'a>, JsonError> {
+    fn parse_number(&mut self) -> Result<JsonToken<'a>, JsonError> {
         let start = self.source.position();
-        let mut state = ParseNumberState::Start;
-        let mut stopped_on_error = false;
 
-        loop {
-            let Some(c) = self.source.peek_char() else {
-                break;
-            };
-
-            let next_state = match c {
-                '-' => match state {
-                    ParseNumberState::Start => ParseNumberState::Signed,
-                    ParseNumberState::StartExp => ParseNumberState::ExpSign,
-                    _ => ParseNumberState::OnError,
-                },
-                '0'..='9' => match state {
-                    ParseNumberState::Start
-                    | ParseNumberState::Signed
-                    | ParseNumberState::Integer => ParseNumberState::Integer,
-                    ParseNumberState::StartDecimal | ParseNumberState::InDecimal => {
-                        ParseNumberState::InDecimal
-                    }
-                    ParseNumberState::StartExp
-                    | ParseNumberState::ExpSign
-                    | ParseNumberState::ExpValue => ParseNumberState::ExpValue,
-                    _ => ParseNumberState::OnError,
-                },
-                '.' => match state {
-                    ParseNumberState::Integer => ParseNumberState::StartDecimal,
-                    _ => ParseNumberState::OnError,
-                },
-                'e' | 'E' => match state {
-                    ParseNumberState::InDecimal | ParseNumberState::Integer => {
-                        ParseNumberState::StartExp
-                    }
-                    _ => ParseNumberState::OnError,
-                },
-                '+' => match state {
-                    ParseNumberState::StartExp => ParseNumberState::ExpSign,
-                    _ => ParseNumberState::OnError,
-                },
-                '{' | '}' | '[' | ']' | ',' | ' ' | ':' | '\r' | '\t' | '\n' => {
-                    ParseNumberState::OnSeparator
-                }
-                _ => ParseNumberState::OnError,
-            };
-
-            match next_state {
-                ParseNumberState::OnSeparator => break,
-                ParseNumberState::OnError => {
-                    self.source.bump_char();
-                    stopped_on_error = true;
-                    break;
-                }
-                _ => {
-                    state = next_state;
-                    self.source.bump_char();
-                }
+        // The pure scanner (in `number`) classifies the token and reports how
+        // many bytes it consumed; the lexer only maps that onto spans/errors.
+        match number::scan_number(self.source.remaining()) {
+            Ok((len, kind)) => {
+                self.source.bump_n(len);
+                let span = Span {
+                    start,
+                    end: self.source.position(),
+                };
+                let raw = std::str::from_utf8(self.source.slice_abs(span.start, span.end))
+                    .map_err(|_| self.error_at(JsonErrorKind::InvalidNumber, span))?;
+                Ok(JsonToken::number(
+                    span,
+                    JsonNumber::new(Cow::Borrowed(raw), kind),
+                ))
+            }
+            Err(consumed) => {
+                self.source.bump_n(consumed);
+                let span = Span {
+                    start,
+                    end: self.source.position(),
+                };
+                Err(self.error_at(JsonErrorKind::InvalidNumber, span))
             }
         }
-
-        let end = self.source.position();
-        let span = Span { start, end };
-
-        if stopped_on_error || end == start {
-            return Err(self.error_at(JsonErrorKind::InvalidNumber, span, start_loc));
-        }
-
-        let raw = std::str::from_utf8(self.source.slice_abs(start, end))
-            .map_err(|_| self.error_at(JsonErrorKind::InvalidNumber, span, start_loc))?;
-
-        if Self::has_leading_zero(raw) {
-            return Err(self.error_at(JsonErrorKind::InvalidNumber, span, start_loc));
-        }
-
-        let kind = match state {
-            ParseNumberState::Integer => JsonNumberKind::IntegerLike,
-            ParseNumberState::InDecimal | ParseNumberState::ExpValue => JsonNumberKind::FloatLike,
-            _ => return Err(self.error_at(JsonErrorKind::InvalidNumber, span, start_loc)),
-        };
-
-        Ok(JsonToken::number(
-            span,
-            start_loc,
-            JsonNumber::new(Cow::Borrowed(raw), kind),
-        ))
     }
 
     fn peek_bytes(&self, len: usize) -> Option<&'a [u8]> {
         self.source.peek_bytes(len)
     }
 
-    fn parse_string(&mut self, start_loc: Location) -> Result<JsonToken<'a>, JsonError> {
+    fn parse_string(&mut self) -> Result<JsonToken<'a>, JsonError> {
         let start = self.source.position();
-        self.source.bump_char(); // opening '"'
+        self.source.bump_n(1); // opening '"'
         let mut has_escape = false;
 
         loop {
             // Fast path: skip a run of bytes that cannot end/escape the string.
-            // AVX2 (x86_64) / NEON (Apple M); otherwise legacy char-by-char below.
-            if vector_scan::is_available() {
+            // AVX2 (x86_64) / NEON (Apple M); otherwise scalar byte loop below.
+            if scan::is_available() {
                 let rem = self.source.remaining();
                 if rem.is_empty() {
                     return Err(self.error_at(
@@ -376,10 +291,9 @@ impl<'a> Lexer<'a> {
                             start,
                             end: self.source.position(),
                         },
-                        start_loc,
                     ));
                 }
-                match vector_scan::find_string_special(rem) {
+                match scan::find_string_special(rem) {
                     Some(0) => {}
                     Some(idx) => {
                         self.source.bump_n(idx);
@@ -392,96 +306,75 @@ impl<'a> Lexer<'a> {
                 }
             }
 
-            let Some(c) = self.source.peek_char() else {
+            let Some(b) = self.source.peek_byte() else {
                 return Err(self.error_at(
                     JsonErrorKind::UnterminatedString,
                     Span {
                         start,
                         end: self.source.position(),
                     },
-                    start_loc,
                 ));
             };
 
-            if c == '\\' {
+            if b == b'\\' {
                 has_escape = true;
                 let esc_pos = self.source.position();
+                // Two-char escapes: `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`.
                 if let Some(bytes) = self.peek_bytes(2) {
-                    if let Ok(escape) = std::str::from_utf8(bytes) {
-                        if is_escape_token(&escape) {
-                            self.source.bump_char();
-                            self.source.bump_char();
-                            continue;
-                        }
+                    if is_escape_byte(bytes[1]) {
+                        self.source.bump_n(2);
+                        continue;
                     }
                 }
+                // Unicode escape: `\uXXXX` with four hex digits.
                 if let Some(bytes) = self.peek_bytes(6) {
-                    if let Ok(escape) = std::str::from_utf8(bytes) {
-                        if Self::is_hex_escape(escape) {
-                            for _ in 0..6 {
-                                self.source.bump_char();
-                            }
-                            continue;
-                        }
+                    if bytes[1] == b'u' && bytes[2..6].iter().all(u8::is_ascii_hexdigit) {
+                        self.source.bump_n(6);
+                        continue;
                     }
                 }
 
-                let starts_u =
-                    self.peek_bytes(2).and_then(|b| std::str::from_utf8(b).ok()) == Some("\\u");
+                let starts_u = matches!(self.peek_bytes(2), Some(b) if b[1] == b'u');
                 if starts_u {
                     let end = (esc_pos + 6).min(self.source.buffered_end().max(esc_pos + 2));
                     return Err(self.error_at(
                         JsonErrorKind::InvalidUnicodeEscape,
                         Span { start, end },
-                        start_loc,
                     ));
                 }
 
                 let end = (esc_pos + 2).min(self.source.buffered_end().max(esc_pos + 1));
-                return Err(self.error_at(
-                    JsonErrorKind::InvalidEscape,
-                    Span { start, end },
-                    start_loc,
-                ));
-            } else if c == '"' {
-                self.source.bump_char();
+                return Err(self.error_at(JsonErrorKind::InvalidEscape, Span { start, end }));
+            } else if b == b'"' {
+                self.source.bump_n(1);
                 let end = self.source.position();
                 let span = Span { start, end };
                 let raw = std::str::from_utf8(self.source.slice_abs(start + 1, end - 1))
-                    .map_err(|_| self.error_at(JsonErrorKind::InvalidEscape, span, start_loc))?;
+                    .map_err(|_| self.error_at(JsonErrorKind::InvalidEscape, span))?;
                 let value = if has_escape {
                     let owned = unescape_json_string(raw)
-                        .map_err(|err| self.error_at(Self::unescape_kind(err), span, start_loc))?;
+                        .map_err(|err| self.error_at(Self::unescape_kind(err), span))?;
                     Cow::Owned(owned)
                 } else {
                     // Zero-copy: alias the input bytes (no heap String).
                     Cow::Borrowed(raw)
                 };
-                return Ok(JsonToken::string(span, start_loc, value));
-            } else if must_be_escaped(c) {
-                self.source.bump_char();
+                return Ok(JsonToken::string(span, value));
+            } else if b < 0x20 {
+                // Unescaped control byte is invalid inside a JSON string.
+                self.source.bump_n(1);
                 return Err(self.error_at(
                     JsonErrorKind::UnescapedControl,
                     Span {
                         start,
                         end: self.source.position(),
                     },
-                    start_loc,
                 ));
             } else {
-                self.source.bump_char();
+                // Ordinary content byte (ASCII or a UTF-8 lead/continuation byte).
+                self.source.bump_n(1);
             }
         }
-    }
-
-    fn is_hex_escape(value: &str) -> bool {
-        value.len() == 6
-            && value.starts_with("\\u")
-            && value
-                .get(2..)
-                .unwrap()
-                .chars()
-                .all(|c| c.is_ascii_hexdigit())
     }
 
     fn unescape_kind(err: UnescapeError) -> JsonErrorKind {
@@ -512,15 +405,7 @@ mod test {
     }
 
     fn tok(kind: JsonTokenKind, start: usize, end: usize) -> JsonToken<'static> {
-        use crate::Location;
-        JsonToken::simple(
-            kind,
-            Span { start, end },
-            Location {
-                line: 1,
-                column: start + 1,
-            },
-        )
+        JsonToken::simple(kind, Span { start, end })
     }
 
     fn kinds(tokens: &[JsonToken]) -> Vec<JsonTokenKind> {

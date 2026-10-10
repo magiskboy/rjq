@@ -1,47 +1,31 @@
-//! NEON byte-scan helpers for Apple Silicon / AArch64 JSON lexer hot paths.
+//! NEON byte-scan backend for AArch64 (Apple Silicon et al.).
 //!
-//! Mirrors [`super::simd`] (AVX2 on `x86_64`). On non-`aarch64` targets every
-//! entry point reports unavailable and falls back to scalar.
+//! NEON is a baseline feature on AArch64, so [`is_available`] is always true and
+//! no runtime detection is required. Falls back to [`super::scalar`] for the
+//! sub-16-byte tail. Mirrors [`super::avx2`] (x86_64 counterpart).
 
-use super::simd::{find_non_whitespace_scalar, find_string_special_scalar};
+use super::scalar;
 
 /// True when NEON vectorized byte scan is available (AArch64 baseline).
 #[inline]
 pub fn is_available() -> bool {
-    cfg!(target_arch = "aarch64")
+    true
 }
 
-/// Index of the first JSON string "special" byte in `haystack`, or `None` if
-/// every byte is safe unescaped content.
-///
-/// A special byte is `"`, `\`, or a control byte (`< 0x20`).
+/// See [`super::scalar::find_string_special`].
 #[inline]
 pub fn find_string_special(haystack: &[u8]) -> Option<usize> {
-    #[cfg(target_arch = "aarch64")]
-    {
-        return unsafe { find_string_special_neon(haystack) };
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        find_string_special_scalar(haystack)
-    }
+    // SAFETY: NEON is a baseline AArch64 feature.
+    unsafe { find_string_special_neon(haystack) }
 }
 
-/// Index of the first non-JSON-whitespace byte (`space` / `\t` / `\n` / `\r`),
-/// or `None` if the whole slice is whitespace.
+/// See [`super::scalar::find_non_whitespace`].
 #[inline]
 pub fn find_non_whitespace(haystack: &[u8]) -> Option<usize> {
-    #[cfg(target_arch = "aarch64")]
-    {
-        return unsafe { find_non_whitespace_neon(haystack) };
-    }
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        find_non_whitespace_scalar(haystack)
-    }
+    // SAFETY: NEON is a baseline AArch64 feature.
+    unsafe { find_non_whitespace_neon(haystack) }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn find_string_special_neon(haystack: &[u8]) -> Option<usize> {
     use std::arch::aarch64::*;
@@ -66,10 +50,9 @@ unsafe fn find_string_special_neon(haystack: &[u8]) -> Option<usize> {
         offset += 16;
     }
 
-    find_string_special_scalar(&haystack[offset..]).map(|i| offset + i)
+    scalar::find_string_special(&haystack[offset..]).map(|i| offset + i)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn find_non_whitespace_neon(haystack: &[u8]) -> Option<usize> {
     use std::arch::aarch64::*;
@@ -94,11 +77,10 @@ unsafe fn find_non_whitespace_neon(haystack: &[u8]) -> Option<usize> {
         offset += 16;
     }
 
-    find_non_whitespace_scalar(&haystack[offset..]).map(|i| offset + i)
+    scalar::find_non_whitespace(&haystack[offset..]).map(|i| offset + i)
 }
 
 /// Compact 16 NEON comparison lanes (0x00 / 0xFF) into a 16-bit mask.
-#[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn neon_mask16(lanes: std::arch::aarch64::uint8x16_t) -> u32 {
     use std::arch::aarch64::*;
@@ -116,7 +98,6 @@ unsafe fn neon_mask16(lanes: std::arch::aarch64::uint8x16_t) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json::simd::{find_non_whitespace_scalar, find_string_special_scalar};
 
     #[test]
     fn string_special_dispatch_matches_scalar() {
@@ -134,7 +115,7 @@ mod tests {
         for s in samples {
             assert_eq!(
                 find_string_special(s),
-                find_string_special_scalar(s),
+                scalar::find_string_special(s),
                 "mismatch on {s:?}"
             );
         }
@@ -157,7 +138,7 @@ mod tests {
         for s in samples {
             assert_eq!(
                 find_non_whitespace(s),
-                find_non_whitespace_scalar(s),
+                scalar::find_non_whitespace(s),
                 "mismatch on {s:?}"
             );
         }
@@ -165,6 +146,6 @@ mod tests {
 
     #[test]
     fn available_on_aarch64() {
-        assert_eq!(is_available(), cfg!(target_arch = "aarch64"));
+        assert!(is_available());
     }
 }

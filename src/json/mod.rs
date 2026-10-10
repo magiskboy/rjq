@@ -7,9 +7,8 @@ pub mod error;
 pub(crate) mod escape;
 pub(crate) mod lexer;
 pub mod number;
-pub(crate) mod neon;
 pub(crate) mod parser;
-pub(crate) mod simd;
+pub(crate) mod scan;
 pub(crate) mod source;
 pub(crate) mod token;
 pub mod value;
@@ -133,7 +132,7 @@ fn dump(
 
                     dump(value, writer, opts, depth + 1)?;
 
-                    if i + i < object.len() {
+                    if i + 1 < object.len() {
                         write!(writer, ",")?;
                     }
 

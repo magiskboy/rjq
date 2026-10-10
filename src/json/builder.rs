@@ -1,7 +1,6 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 
-use crate::json::{error::JsonError, number::JsonNumber, value::JsonValue};
+use crate::json::{error::JsonError, number::JsonNumber, value::JsonObject, value::JsonValue};
 
 /// A scalar the lexer/parser has already validated.
 ///
@@ -54,7 +53,7 @@ pub struct JsonValueBuilder;
 impl<'a> JsonBuilder<'a> for JsonValueBuilder {
     type Value = JsonValue<'a>;
     type Array = Vec<JsonValue<'a>>;
-    type Object = Vec<(Cow<'a, str>, JsonValue<'a>)>;
+    type Object = JsonObject<'a>;
     type Error = JsonError;
 
     fn atom(&mut self, atom: JsonAtom<'a>) -> Result<Self::Value, Self::Error> {
@@ -84,7 +83,7 @@ impl<'a> JsonBuilder<'a> for JsonValueBuilder {
     }
 
     fn begin_object(&mut self) -> Result<Self::Object, Self::Error> {
-        Ok(Vec::new())
+        Ok(JsonObject::new())
     }
 
     fn object_insert(
@@ -93,15 +92,13 @@ impl<'a> JsonBuilder<'a> for JsonValueBuilder {
         key: Cow<'a, str>,
         value: Self::Value,
     ) -> Result<(), Self::Error> {
-        object.push((key, value));
+        // Hot path: append without hashing or de-duplication. Duplicate keys are
+        // resolved at lookup time (last value wins), matching dict / orjson.
+        object.push(key, value);
         Ok(())
     }
 
     fn end_object(&mut self, object: Self::Object) -> Result<Self::Value, Self::Error> {
-        // Collect through HashMap so duplicate keys keep the last value,
-        // matching the previous parser behavior.
-        Ok(JsonValue::object(
-            HashMap::<Cow<'a, str>, JsonValue<'a>>::from_iter(object.into_iter()),
-        ))
+        Ok(JsonValue::Object(object))
     }
 }

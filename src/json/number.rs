@@ -25,6 +25,92 @@ pub enum NumberError {
     Invalid,
 }
 
+/// State machine for recognizing a JSON number token's byte span. Supports the
+/// full grammar, e.g. `-1.2e-3`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NumberState {
+    Start,
+    Signed,
+    Integer,
+    StartDecimal,
+    InDecimal,
+    StartExp, // just saw `e`/`E`
+    ExpSign,
+    ExpValue,
+    OnSeparator,
+}
+
+/// Scan a JSON number at the start of `bytes`.
+///
+/// Returns `Ok((len, kind))` — bytes consumed and the number's classification —
+/// or `Err(consumed)`, where `consumed` is how many bytes were read before the
+/// token proved invalid (the lexer uses it to build the error span).
+///
+/// Pure and architecture-independent, so it is unit-tested directly here and
+/// forms the single source of truth for number lexing (incl. the future P2
+/// SIMD fast-path, which must agree with this).
+pub(crate) fn scan_number(bytes: &[u8]) -> Result<(usize, JsonNumberKind), usize> {
+    use NumberState::*;
+
+    let mut state = Start;
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        let next = match bytes[i] {
+            b'-' => match state {
+                Start => Signed,
+                StartExp => ExpSign,
+                _ => return Err(i + 1),
+            },
+            b'0'..=b'9' => match state {
+                Start | Signed | Integer => Integer,
+                StartDecimal | InDecimal => InDecimal,
+                StartExp | ExpSign | ExpValue => ExpValue,
+                _ => return Err(i + 1),
+            },
+            b'.' => match state {
+                Integer => StartDecimal,
+                _ => return Err(i + 1),
+            },
+            b'e' | b'E' => match state {
+                InDecimal | Integer => StartExp,
+                _ => return Err(i + 1),
+            },
+            b'+' => match state {
+                StartExp => ExpSign,
+                _ => return Err(i + 1),
+            },
+            b'{' | b'}' | b'[' | b']' | b',' | b' ' | b':' | b'\r' | b'\t' | b'\n' => OnSeparator,
+            _ => return Err(i + 1),
+        };
+
+        if next == OnSeparator {
+            break;
+        }
+        state = next;
+        i += 1;
+    }
+
+    if i == 0 || has_leading_zero(&bytes[..i]) {
+        return Err(i);
+    }
+
+    match state {
+        Integer => Ok((i, JsonNumberKind::IntegerLike)),
+        InDecimal | ExpValue => Ok((i, JsonNumberKind::FloatLike)),
+        _ => Err(i),
+    }
+}
+
+/// JSON forbids a leading zero followed by another digit (e.g. `01`, `-00`).
+fn has_leading_zero(bytes: &[u8]) -> bool {
+    let digits = match bytes.first() {
+        Some(b'-') => &bytes[1..],
+        _ => bytes,
+    };
+    matches!(digits, [b'0', b'0'..=b'9', ..])
+}
+
 /// Python-oriented view of a JSON number.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PyNumber {
@@ -159,5 +245,39 @@ mod tests {
     fn scientific_as_f64() {
         let n = JsonNumber::new("1e2", JsonNumberKind::FloatLike);
         assert_eq!(n.as_f64(), Ok(100.0));
+    }
+
+    #[test]
+    fn scan_number_classifies_valid_tokens() {
+        use JsonNumberKind::*;
+        let cases: [(&str, usize, JsonNumberKind); 7] = [
+            ("0", 1, IntegerLike),
+            ("-10", 3, IntegerLike),
+            ("3.14", 4, FloatLike),
+            ("1e2", 3, FloatLike),
+            ("-2.5E+1", 7, FloatLike),
+            ("12,", 2, IntegerLike),  // stops at separator
+            ("5]", 1, IntegerLike),   // stops at separator
+        ];
+        for (s, len, kind) in cases {
+            assert_eq!(scan_number(s.as_bytes()), Ok((len, kind)), "input {s:?}");
+        }
+    }
+
+    #[test]
+    fn scan_number_rejects_invalid_tokens() {
+        // Err carries how many bytes were consumed (for the error span).
+        let cases: [(&str, usize); 7] = [
+            ("01", 2),
+            ("-01", 3),
+            ("1.", 2),
+            ("1e", 2),
+            ("1e+", 3),
+            ("1.2.3", 4), // consumes the offending second '.'
+            ("-", 1),
+        ];
+        for (s, consumed) in cases {
+            assert_eq!(scan_number(s.as_bytes()), Err(consumed), "input {s:?}");
+        }
     }
 }

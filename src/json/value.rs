@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::{cmp::Ordering, collections::HashMap, fmt::Display};
+use std::{cmp::Ordering, fmt::Display};
 
 use crate::Structured;
 use crate::json::{
@@ -36,7 +36,107 @@ pub enum JsonValue<'a> {
     True,
     False,
     Array(Vec<JsonValue<'a>>),
-    Object(HashMap<Cow<'a, str>, JsonValue<'a>>),
+    Object(JsonObject<'a>),
+}
+
+/// Insertion-ordered JSON object, backed by a `Vec` of `(key, value)` entries.
+///
+/// This mirrors the semantics of a Python `dict` (and therefore `orjson` /
+/// `ujson`): iteration preserves insertion order. Building is allocation-light
+/// — the parser pushes entries directly with no hashing and no second pass.
+///
+/// Lookups ([`get`](JsonObject::get)) scan from the end so that, for the rare
+/// case of duplicate keys, the last value wins (matching dict/`orjson`).
+#[derive(Debug, Clone, Default)]
+pub struct JsonObject<'a> {
+    entries: Vec<(Cow<'a, str>, JsonValue<'a>)>,
+}
+
+impl<'a> JsonObject<'a> {
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            entries: Vec::with_capacity(capacity),
+        }
+    }
+
+    /// Wrap pre-built entries without de-duplication (caller guarantees shape).
+    pub fn from_entries(entries: Vec<(Cow<'a, str>, JsonValue<'a>)>) -> Self {
+        Self { entries }
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Append an entry without de-duplication. Hot path used by the parser.
+    pub fn push(&mut self, key: Cow<'a, str>, value: JsonValue<'a>) {
+        self.entries.push((key, value));
+    }
+
+    /// Insert replacing an existing key in place (keeps original position),
+    /// otherwise append. Used by mutating APIs (not the parse hot path).
+    pub fn insert(&mut self, key: Cow<'a, str>, value: JsonValue<'a>) {
+        if let Some(slot) = self.entries.iter_mut().find(|(k, _)| *k == key) {
+            slot.1 = value;
+        } else {
+            self.entries.push((key, value));
+        }
+    }
+
+    /// Look up a key, returning the last-inserted value for that key.
+    pub fn get(&self, key: &str) -> Option<&JsonValue<'a>> {
+        self.entries
+            .iter()
+            .rev()
+            .find(|(k, _)| k.as_ref() == key)
+            .map(|(_, v)| v)
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, (Cow<'a, str>, JsonValue<'a>)> {
+        self.entries.iter()
+    }
+}
+
+impl<'a> IntoIterator for JsonObject<'a> {
+    type Item = (Cow<'a, str>, JsonValue<'a>);
+    type IntoIter = std::vec::IntoIter<(Cow<'a, str>, JsonValue<'a>)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
+}
+
+impl<'a> FromIterator<(Cow<'a, str>, JsonValue<'a>)> for JsonObject<'a> {
+    fn from_iter<T: IntoIterator<Item = (Cow<'a, str>, JsonValue<'a>)>>(iter: T) -> Self {
+        let mut object = JsonObject::new();
+        for (key, value) in iter {
+            // Public constructor path: de-duplicate so repeated keys collapse to
+            // the last value (preserves the historical HashMap-based behavior).
+            object.insert(key, value);
+        }
+        object
+    }
+}
+
+/// Order-independent equality: two objects are equal when they have the same
+/// set of keys mapping to equal values (duplicate-free inputs).
+impl<'a> PartialEq for JsonObject<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+        self.iter().all(|(k, v)| other.get(k) == Some(v))
+    }
 }
 
 impl Display for JsonValue<'_> {
@@ -75,7 +175,7 @@ impl<'a> JsonValue<'a> {
     }
 
     pub fn empty_object() -> Self {
-        JsonValue::Object(HashMap::new())
+        JsonValue::Object(JsonObject::new())
     }
 
     pub fn object<K>(items: impl IntoIterator<Item = (K, JsonValue<'a>)>) -> Self
@@ -97,12 +197,12 @@ impl<'a> JsonValue<'a> {
             JsonValue::Array(items) => {
                 JsonValue::Array(items.into_iter().map(JsonValue::into_owned).collect())
             }
-            JsonValue::Object(object) => JsonValue::Object(
+            JsonValue::Object(object) => JsonValue::Object(JsonObject::from_entries(
                 object
                     .into_iter()
                     .map(|(k, v)| (Cow::Owned(k.into_owned()), v.into_owned()))
                     .collect(),
-            ),
+            )),
         }
     }
 }
@@ -203,7 +303,7 @@ impl<'a> Structured for JsonValue<'a> {
     fn insert(&mut self, key: &str, element: JsonValue<'a>) -> Result<(), JsonError> {
         match self {
             JsonValue::Object(object) => {
-                let _ = object.insert(Cow::Owned(key.to_string()), element);
+                object.insert(Cow::Owned(key.to_string()), element);
                 Ok(())
             }
             JsonValue::Array(items) => {
