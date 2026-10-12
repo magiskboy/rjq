@@ -1,4 +1,4 @@
-"""Shared helpers for JSON parse benchmarks."""
+"""Shared helpers for JQL query benchmarks."""
 
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ def ratio(a: float, b: float) -> str:
 
 @dataclass
 class BenchStats:
-    """One named parser measurement (wall times in seconds)."""
+    """One named measurement (wall times in seconds)."""
 
     name: str
     suite: str
@@ -135,7 +135,7 @@ def print_report(
     print(f"input    : {fmt_bytes(rows[0].input_bytes)}")
     print()
 
-    headers = ["suite", "parser", "median ms", "mean ms", "±stdev", "MB/s", "peak RSS", "ok"]
+    headers = ["suite", "name", "median ms", "mean ms", "±stdev", "MB/s", "peak RSS", "ok"]
     table: list[list[str]] = []
     for s in rows:
         ok = f"{len(s.walls)}/{len(s.walls) + s.errors}"
@@ -159,31 +159,43 @@ def print_report(
     for row in table:
         print(fmt.format(*row))
 
-    # Prefer within-suite relative numbers (suites are not directly comparable).
     by_suite: dict[str, list[BenchStats]] = {}
     for s in rows:
         by_suite.setdefault(s.suite, []).append(s)
 
-    suite_baselines = {
-        "rust": ("rs_jq",),
-        "python": ("rjson.rjson_load", "rjson.rjson_loads"),
-        "cli": ("rs-jq",),
-    }
     printed_any = False
     for suite, members in by_suite.items():
         ok = [s for s in members if s.walls]
         if len(ok) < 2:
             continue
+
+        # Prefer pairing rjq vs jq per case within the cli suite.
+        if suite == "cli":
+            by_case: dict[str, list[BenchStats]] = {}
+            for s in ok:
+                # names look like "rjq/access" or "jq/filter"
+                case = s.name.split("/", 1)[-1] if "/" in s.name else s.name
+                by_case.setdefault(case, []).append(s)
+            for case, group in by_case.items():
+                if len(group) < 2:
+                    continue
+                baseline = next((s for s in group if s.name.startswith("rjq")), group[0])
+                others = [s for s in group if s is not baseline]
+                if not printed_any:
+                    print()
+                    printed_any = True
+                print(f"relative to {baseline.name} [{suite}/{case}]:")
+                for other in others:
+                    print(
+                        f"  {other.name:<28}  wall {ratio(other.median(), baseline.median())}"
+                        f"  throughput {ratio(other.mb_per_s(), baseline.mb_per_s())}"
+                        "  (>1 wall = slower, >1 thr = faster)"
+                    )
+            continue
+
         baseline = None
         if baseline_name:
             baseline = next((s for s in ok if s.name == baseline_name), None)
-        if baseline is None:
-            for candidate in suite_baselines.get(suite, ()):
-                baseline = next((s for s in ok if s.name == candidate), None)
-                if baseline is not None:
-                    break
-        if baseline is None:
-            baseline = next((s for s in ok if "rjson" in s.name or s.name.startswith("rs")), None)
         if baseline is None:
             baseline = ok[0]
         others = [s for s in ok if s is not baseline]
@@ -200,7 +212,7 @@ def print_report(
 
     print()
     print("notes:")
-    print("  - MB/s uses median wall time over successful runs.")
-    print("  - Suites differ in output shape (native Rust tree / Python objects / CLI).")
-    print("  - Compare within a suite for the fairest apples-to-apples numbers.")
+    print("  - rust suite: JSON is parsed once; timed loops are jql_execute only.")
+    print("  - cli suite: end-to-end process time (parse + query + process overhead).")
+    print("  - filter jq script uses map(select(...)) as the closest stock-jq form.")
     print("=" * 78)
