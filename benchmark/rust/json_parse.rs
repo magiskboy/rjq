@@ -1,4 +1,14 @@
+//! Criterion micro-benchmarks: `rs_jq` vs `serde_json`.
+//!
+//! Synthetic workloads plus optional shared fixture:
+//!
+//! ```text
+//! cargo bench --bench json_parse
+//! BENCH_FIXTURE=benchmark/fixtures/fixture_5mb.json cargo bench --bench json_parse
+//! ```
+
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::path::PathBuf;
 
 /// Deeply nested + wide object, mix of strings (no escapes), numbers, bools.
 fn gen_twitter_like(records: usize) -> String {
@@ -77,6 +87,24 @@ fn bench_dataset(c: &mut Criterion, name: &str, data: &str) {
     group.finish();
 }
 
+fn resolve_fixture() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("BENCH_FIXTURE") {
+        let path = PathBuf::from(p);
+        if path.is_file() {
+            return Some(path);
+        }
+        eprintln!("BENCH_FIXTURE not found: {}", path.display());
+        return None;
+    }
+    let default = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("benchmark/fixtures/fixture_5mb.json");
+    if default.is_file() {
+        Some(default)
+    } else {
+        None
+    }
+}
+
 fn benches(c: &mut Criterion) {
     let twitter = gen_twitter_like(2_000);
     let numbers = gen_numbers(50_000);
@@ -92,6 +120,25 @@ fn benches(c: &mut Criterion) {
     bench_dataset(c, "twitter_like", &twitter);
     bench_dataset(c, "numbers", &numbers);
     bench_dataset(c, "strings", &strings);
+
+    if let Some(path) = resolve_fixture() {
+        match std::fs::read_to_string(&path) {
+            Ok(data) => {
+                eprintln!(
+                    "fixture: {} ({} KiB)",
+                    path.display(),
+                    data.len() / 1024
+                );
+                bench_dataset(c, "shared_fixture", &data);
+            }
+            Err(e) => eprintln!("failed to read fixture {}: {e}", path.display()),
+        }
+    } else {
+        eprintln!(
+            "tip: generate a shared fixture for cross-suite comparison:\n  \
+             python benchmark/run.py --suite fixture --size-mb 5"
+        );
+    }
 }
 
 criterion_group!(g, benches);

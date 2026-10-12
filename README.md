@@ -30,36 +30,24 @@ cargo test
 
 ## Benchmarks
 
-Fixture ~5 MiB, Darwin arm64, Python 3.13. Re-run:
+All parse benchmarks live under [`benchmark/`](benchmark/README.md):
+
+| Suite | Competitors |
+|---|---|
+| **rust** | `rs_jq`, `serde_json` |
+| **python** | `rjson`, `json`, `orjson`, `ujson` |
+| **cli** | `rs-jq`, stock `jq` |
 
 ```bash
-cargo build --release --features cli
-# Python binding: maturin develop --release
-python scripts/bench_rjson_py.py --size-mb 5
-python scripts/bench_parse.py --size-mb 5
+cargo build --release --features "cli,bench" --bin jq --bin bench-json-parse
+pip install -r benchmark/requirements.txt
+maturin develop --release   # rjson binding
+
+python benchmark/run.py                  # rust + python + cli (~5 MiB fixture)
+python benchmark/run.py --suite rust
+python benchmark/run.py --suite python --only rjson,orjson,ujson
+cargo bench --bench json_parse           # Criterion microbench
 ```
-
-### Python parse (`rjson` vs others)
-
-Full parse into a Python object tree (`dict` / `list` / …).
-
-| Parser | median | MB/s | vs `rjson` (wall) |
-|---|---:|---:|---:|
-| `rjson.rjson_loads` | 85 ms | 59 | 1.00× (baseline) |
-| `rjson.rjson_load` | 83 ms | 61 | 0.98× |
-| `json.loads` | 38 ms | 132 | **0.45×** (faster than rjson) |
-| `json.loads(bytes)` | 35 ms | 144 | **0.41×** |
-| `ujson.loads` | 32 ms | 154 | **0.38×** |
-| `ujson.loads(bytes)` | 30 ms | 165 | **0.36×** |
-| `orjson.loads` | 23 ms | 217 | **0.27×** |
-| `orjson.loads(bytes)` | 21 ms | 238 | **0.25×** |
-
-### CLI parse (`rs-jq` vs stock `jq`)
-
-| Tool | median | MB/s | tokens/s | peak RSS | vs `rs-jq` (wall) |
-|---|---:|---:|---:|---:|---:|
-| `rs-jq` (`target/release/jq`) | 194 ms | 26 | 7.9M | ~110 MiB | 1.00× (baseline) |
-| stock `jq` | 289 ms | 17 | 5.3M | ~67 MiB | **1.49×** (slower than rs-jq) |
 
 ## Optimization methods
 
