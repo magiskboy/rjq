@@ -87,8 +87,8 @@ def resolve_rs_jq(explicit: str | None) -> Path:
         if not p.is_file():
             raise SystemExit(f"rs-jq binary not found: {p}")
         return p
-    release = ROOT / "target" / "release" / "jq"
-    debug = ROOT / "target" / "debug" / "jq"
+    release = ROOT / "target" / "release" / "rjq"
+    debug = ROOT / "target" / "debug" / "rjq"
     if release.is_file():
         return release
     if debug.is_file():

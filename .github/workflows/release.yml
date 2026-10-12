@@ -1,0 +1,199 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+          save-if: true
+
+      - name: Test library (release)
+        run: cargo test --locked --release
+
+      - name: Test with CLI feature (release)
+        run: cargo test --locked --release --features cli
+
+  build-cli:
+    name: Build rjq (${{ matrix.target }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: rjq
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            bin: rjq
+            cross: true
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bin: rjq
+          - os: macos-13
+            target: x86_64-apple-darwin
+            bin: rjq
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: rjq.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-cli
+          key: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build CLI (release, native)
+        if: ${{ matrix.cross != true }}
+        run: >
+          cargo build --locked --release
+          --features cli --bin rjq
+          --target ${{ matrix.target }}
+
+      - name: Build CLI (release, cross)
+        if: ${{ matrix.cross == true }}
+        run: >
+          cross build --locked --release
+          --features cli --bin rjq
+          --target ${{ matrix.target }}
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          staging="rjq-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir -p "$staging"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$staging/"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            7z a "${staging}.zip" "$staging"
+            echo "ASSET=${staging}.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "${staging}.tar.gz" "$staging"
+            echo "ASSET=${staging}.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      - name: Upload rjq artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rjq-${{ matrix.target }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+          retention-days: 30
+
+  build-python:
+    name: Build rjson (${{ matrix.os }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            manylinux: auto
+          - os: macos-latest
+            manylinux: "off"
+          - os: windows-latest
+            manylinux: "off"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-python
+          key: ${{ matrix.os }}
+
+      - name: Build wheel (release)
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --out dist
+          sccache: "true"
+          manylinux: ${{ matrix.manylinux }}
+
+      - name: Upload rjson artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rjson-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish GitHub Release
+    needs: [build-cli, build-python]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          find artifacts -type f \( \
+            -name 'rjq-*.tar.gz' -o -name 'rjq-*.zip' -o \
+            -name 'rjson-*.whl' -o -name 'rjson-*.tar.gz' \
+          \) -exec cp {} release-assets/ \;
+          ls -la release-assets
+          test "$(find release-assets -type f | wc -l)" -gt 0
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (dev)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: dev
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Test library
+        run: cargo test --locked
+
+      - name: Test with CLI feature
+        run: cargo test --locked --features cli
+
+  build-cli:
+    name: Build rjq (dev)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: dev
+          save-if: false
+
+      - name: Build CLI (debug)
+        run: cargo build --locked --features cli --bin rjq
+
+      - name: Upload rjq artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rjq-dev-linux-x86_64
+          path: target/debug/rjq
+          if-no-files-found: error
+          retention-days: 7
+
+  build-python:
+    name: Build rjson (dev)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: python-dev
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build wheel (debug)
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --out dist
+          sccache: "true"
+          manylinux: auto
+
+      - name: Upload rjson artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rjson-dev-linux-x86_64
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 7

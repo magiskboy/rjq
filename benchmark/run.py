@@ -11,7 +11,7 @@ Suites (same fixture by default under benchmark/fixtures/):
   criterion  — Criterion microbench (rs_jq vs serde_json)
 
 Prerequisites:
-  cargo build --release --features "cli,bench" --bin jq --bin bench-json-parse
+  cargo build --release --features "cli,bench" --bin rjq --bin bench-json-parse
   pip install -r benchmark/requirements.txt
   maturin develop --release   # for rjson
 
@@ -91,7 +91,7 @@ def maybe_build(args: argparse.Namespace, suites: list[str]) -> None:
     bins: list[str] = []
     if "cli" in suites:
         features.append("cli")
-        bins.append("jq")
+        bins.append("rjq")
     if "rust" in suites:
         features.append("bench")
         bins.append("bench-json-parse")

@@ -26,7 +26,7 @@ impl FromStr for InputFormat {
 }
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "jq", about = "CLI for rs-jq")]
+#[structopt(name = "rjq", about = "CLI for rs-jq")]
 struct Opts {
     #[structopt(short, long, default_value = "")]
     input: String,
