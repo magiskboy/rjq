@@ -29,6 +29,7 @@ pub enum JqlErrorKind {
     InvalidToken,
     MissingOperand,
     UnclosedParen,
+    UnclosedBrace,
     InvalidExpression,
     UnexpectedToken {
         expected: ExpectedSyntax,
@@ -56,6 +57,7 @@ impl JqlErrorKind {
             Self::InvalidToken => Some("lexical"),
             Self::MissingOperand
             | Self::UnclosedParen
+            | Self::UnclosedBrace
             | Self::InvalidExpression
             | Self::UnexpectedToken { .. } => Some("parse"),
             Self::InvalidAccess { .. }
@@ -71,6 +73,7 @@ impl JqlErrorKind {
             Self::InvalidToken => Cow::Borrowed("invalid token"),
             Self::MissingOperand => Cow::Borrowed("expected an operand"),
             Self::UnclosedParen => Cow::Borrowed("expected a closed parenthesis"),
+            Self::UnclosedBrace => Cow::Borrowed("expected a closed brace"),
             Self::InvalidExpression => Cow::Borrowed("invalid expression"),
             Self::UnexpectedToken { expected, found } => Cow::Owned(format!(
                 "expected {} but found {}",

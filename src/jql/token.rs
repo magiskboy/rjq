@@ -4,6 +4,10 @@ use crate::Span;
 pub enum JqlTokenKind {
     LParen,
     RParen,
+    LBrace,
+    RBrace,
+    Colon,
+    Comma,
 
     // data types
     Number,
@@ -36,6 +40,10 @@ impl std::fmt::Display for JqlTokenKind {
         match self {
             Self::LParen => write!(f, "LParen"),
             Self::RParen => write!(f, "RParen"),
+            Self::LBrace => write!(f, "LBrace"),
+            Self::RBrace => write!(f, "RBrace"),
+            Self::Colon => write!(f, "Colon"),
+            Self::Comma => write!(f, "Comma"),
             Self::Pipe => write!(f, "Pipe"),
             Self::Number => write!(f, "Number"),
             Self::String => write!(f, "String"),
@@ -62,6 +70,10 @@ impl JqlTokenKind {
         match self {
             Self::LParen => "'('",
             Self::RParen => "')'",
+            Self::LBrace => "'{'",
+            Self::RBrace => "'}'",
+            Self::Colon => "':'",
+            Self::Comma => "','",
             Self::Pipe => "'|'",
             Self::Number => "number",
             Self::String => "string",

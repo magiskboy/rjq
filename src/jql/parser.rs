@@ -1,7 +1,7 @@
 use crate::jql::{
     ast::{
         JqlAstNode::{self},
-        JqlBinaryKind,
+        JqlBinaryKind, ObjectField,
     },
     error::{ExpectedSyntax, JqlError, JqlErrorKind},
     token::{
@@ -16,6 +16,98 @@ use std::collections::VecDeque;
 pub struct JqlParser;
 
 impl JqlParser {
+    fn parse_object<'a>(
+        tokens: &[JqlToken],
+        source: &'a str,
+    ) -> Result<JqlAstNode<'a>, JqlError> {
+        if tokens.is_empty() {
+            return JqlAstNode::object(vec![]);
+        }
+
+        let mut fields = Vec::new();
+        let mut idx: usize = 0;
+
+        while idx < tokens.len() {
+            let key_token = tokens[idx];
+            let key = JqlAstNode::object_key(&key_token, source)?;
+            idx += 1;
+
+            let colon = tokens.get(idx).ok_or_else(|| {
+                JqlError::new(
+                    JqlErrorKind::UnexpectedToken {
+                        expected: ExpectedSyntax::Token(JqlTokenKind::Colon),
+                        found: JqlTokenKind::Stop,
+                    },
+                    key_token.span,
+                    source,
+                )
+            })?;
+            if colon.kind != JqlTokenKind::Colon {
+                return Err(JqlError::new(
+                    JqlErrorKind::UnexpectedToken {
+                        expected: ExpectedSyntax::Token(JqlTokenKind::Colon),
+                        found: colon.kind,
+                    },
+                    colon.span,
+                    source,
+                ));
+            }
+            idx += 1;
+
+            let value_start = idx;
+            let mut depth_paren = 0_i32;
+            let mut depth_brace = 0_i32;
+            while idx < tokens.len() {
+                match tokens[idx].kind {
+                    JqlTokenKind::LParen => depth_paren += 1,
+                    JqlTokenKind::RParen => depth_paren -= 1,
+                    JqlTokenKind::LBrace => depth_brace += 1,
+                    JqlTokenKind::RBrace => depth_brace -= 1,
+                    JqlTokenKind::Comma if depth_paren == 0 && depth_brace == 0 => break,
+                    _ => {}
+                }
+                idx += 1;
+            }
+
+            if value_start == idx {
+                let span = tokens
+                    .get(idx)
+                    .map(|t| t.span)
+                    .unwrap_or(key_token.span);
+                return Err(JqlError::new(JqlErrorKind::InvalidExpression, span, source));
+            }
+
+            let value = Self::parse(&tokens[value_start..idx].to_vec(), source)?;
+            fields.push(ObjectField {
+                key,
+                value: Box::new(value),
+            });
+
+            if idx < tokens.len() {
+                if tokens[idx].kind != JqlTokenKind::Comma {
+                    return Err(JqlError::new(
+                        JqlErrorKind::UnexpectedToken {
+                            expected: ExpectedSyntax::Token(JqlTokenKind::Comma),
+                            found: tokens[idx].kind,
+                        },
+                        tokens[idx].span,
+                        source,
+                    ));
+                }
+                idx += 1;
+                if idx >= tokens.len() {
+                    return Err(JqlError::new(
+                        JqlErrorKind::InvalidExpression,
+                        tokens[idx - 1].span,
+                        source,
+                    ));
+                }
+            }
+        }
+
+        JqlAstNode::object(fields)
+    }
+
     pub fn parse<'a>(tokens: &Vec<JqlToken>, source: &'a str) -> Result<JqlAstNode<'a>, JqlError> {
         let mut operator_stack = VecDeque::<JqlToken>::new();
         let mut operand_stack = VecDeque::<JqlAstNode>::new();
@@ -26,6 +118,33 @@ impl JqlParser {
             let token = tokens[idx];
 
             match token.kind {
+                JqlTokenKind::LBrace => {
+                    let mut depth = 1;
+                    let mut end = idx + 1;
+                    while end < tokens.len() {
+                        match tokens[end].kind {
+                            JqlTokenKind::LBrace => depth += 1,
+                            JqlTokenKind::RBrace => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                        end += 1;
+                    }
+                    if depth != 0 {
+                        return Err(JqlError::new(
+                            JqlErrorKind::UnclosedBrace,
+                            token.span,
+                            source,
+                        ));
+                    }
+                    let inner = tokens[idx + 1..end].to_vec();
+                    operand_stack.push_front(Self::parse_object(&inner, source)?);
+                    idx = end + 1;
+                }
                 JqlTokenKind::LParen => {
                     idx += 1;
                     operator_stack.push_front(token);

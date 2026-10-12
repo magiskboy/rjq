@@ -416,6 +416,81 @@ fn filter_on_non_array_is_execution_error() {
 }
 
 #[test]
+fn map_transforms_array_items() {
+    let data = sample();
+    assert_ok(
+        &data,
+        ".jobs | map(.title)",
+        JsonValue::array(vec![
+            JsonValue::string("Dev".to_string()),
+            JsonValue::string("QA".to_string()),
+            JsonValue::string("PM".to_string()),
+            JsonValue::string("SRE".to_string()),
+        ]),
+    );
+    assert_ok(
+        &data,
+        ".jobs | filter(.active == true) | map(.id)",
+        JsonValue::array(vec![
+            JsonValue::number(1.0),
+            JsonValue::number(2.0),
+            JsonValue::number(15.0),
+        ]),
+    );
+    assert_ok(
+        &data,
+        ".matrix | map(.[0])",
+        JsonValue::array(vec![
+            JsonValue::number(1.0),
+            JsonValue::number(4.0),
+            JsonValue::number(7.0),
+        ]),
+    );
+    assert_ok(&data, ".empty.arr | map(.id)", at(".empty.arr"));
+}
+
+#[test]
+fn map_constructs_object_shapes() {
+    let data = sample();
+    assert_ok(
+        &data,
+        ".jobs | filter(.id > 2) | map({ name: .title, pay: .money })",
+        JsonValue::array(vec![
+            JsonValue::object([
+                ("name".to_string(), JsonValue::string("PM".to_string())),
+                ("pay".to_string(), JsonValue::number(5.0)),
+            ]),
+            JsonValue::object([
+                ("name".to_string(), JsonValue::string("SRE".to_string())),
+                ("pay".to_string(), JsonValue::number(20.0)),
+            ]),
+        ]),
+    );
+    assert_ok(
+        &data,
+        ".company.teams | map({ name: .name, size: .size })",
+        JsonValue::array(vec![
+            JsonValue::object([
+                ("name".to_string(), JsonValue::string("platform".to_string())),
+                ("size".to_string(), JsonValue::number(8.0)),
+            ]),
+            JsonValue::object([
+                ("name".to_string(), JsonValue::string("data".to_string())),
+                ("size".to_string(), JsonValue::number(5.0)),
+            ]),
+        ]),
+    );
+}
+
+#[test]
+fn map_on_non_array_is_execution_error() {
+    let data = sample();
+    assert_exec_err(&data, ".count | map(. > 0)");
+    assert_exec_err(&data, ".person | map(.age)");
+    assert_exec_err(&data, ".name | map(.)");
+}
+
+#[test]
 fn complex_pipeline_across_sample_document() {
     let data = sample();
     assert_ok(

@@ -1,5 +1,5 @@
 use crate::jql::{
-    ast::{JqlAstNode, JqlBinaryKind},
+    ast::{JqlAstNode, JqlBinaryKind, ObjectField, ObjectKey},
     error::{JqlError, JqlErrorKind},
     parser::JqlParser,
     token::{JqlToken, JqlTokenKind},
@@ -61,6 +61,18 @@ fn pipe<'a>(source: JqlAstNode<'a>, dest: JqlAstNode<'a>) -> JqlAstNode<'a> {
 
 fn call<'a>(name: &'a str, args: Vec<JqlAstNode<'a>>) -> JqlAstNode<'a> {
     JqlAstNode::Call { name, args }
+}
+
+fn object<'a>(fields: Vec<(&'a str, JqlAstNode<'a>)>) -> JqlAstNode<'a> {
+    JqlAstNode::Object {
+        fields: fields
+            .into_iter()
+            .map(|(key, value)| ObjectField {
+                key: ObjectKey::Ident(key),
+                value: Box::new(value),
+            })
+            .collect(),
+    }
 }
 
 #[test]
@@ -550,6 +562,94 @@ fn readme_pipeline() {
         parse(source, &parts),
         Ok(pipe(access(".[1]"), call("filter", vec![predicate])))
     );
+}
+
+#[test]
+fn object_construct() {
+    assert_eq!(
+        parse(
+            "{}",
+            &[(JqlTokenKind::LBrace, "{"), (JqlTokenKind::RBrace, "}")]
+        ),
+        Ok(object(vec![]))
+    );
+    assert_eq!(
+        parse(
+            "{ name: .title }",
+            &[
+                (JqlTokenKind::LBrace, "{"),
+                (JqlTokenKind::Identifier, "name"),
+                (JqlTokenKind::Colon, ":"),
+                (JqlTokenKind::Identifier, ".title"),
+                (JqlTokenKind::RBrace, "}"),
+            ]
+        ),
+        Ok(object(vec![("name", access(".title"))]))
+    );
+    assert_eq!(
+        parse(
+            "{ name: .title, pay: .money }",
+            &[
+                (JqlTokenKind::LBrace, "{"),
+                (JqlTokenKind::Identifier, "name"),
+                (JqlTokenKind::Colon, ":"),
+                (JqlTokenKind::Identifier, ".title"),
+                (JqlTokenKind::Comma, ","),
+                (JqlTokenKind::Identifier, "pay"),
+                (JqlTokenKind::Colon, ":"),
+                (JqlTokenKind::Identifier, ".money"),
+                (JqlTokenKind::RBrace, "}"),
+            ]
+        ),
+        Ok(object(vec![
+            ("name", access(".title")),
+            ("pay", access(".money")),
+        ]))
+    );
+}
+
+#[test]
+fn map_call_with_object_construct() {
+    let source = "map({ name: .title, pay: .money })";
+    assert_eq!(
+        parse(
+            source,
+            &[
+                (JqlTokenKind::Identifier, "map"),
+                (JqlTokenKind::LParen, "("),
+                (JqlTokenKind::LBrace, "{"),
+                (JqlTokenKind::Identifier, "name"),
+                (JqlTokenKind::Colon, ":"),
+                (JqlTokenKind::Identifier, ".title"),
+                (JqlTokenKind::Comma, ","),
+                (JqlTokenKind::Identifier, "pay"),
+                (JqlTokenKind::Colon, ":"),
+                (JqlTokenKind::Identifier, ".money"),
+                (JqlTokenKind::RBrace, "}"),
+                (JqlTokenKind::RParen, ")"),
+            ]
+        ),
+        Ok(call(
+            "map",
+            vec![object(vec![
+                ("name", access(".title")),
+                ("pay", access(".money")),
+            ])]
+        ))
+    );
+}
+
+#[test]
+fn unclosed_brace_reports_span_on_open() {
+    let err = parse("{ name: .title", &[
+        (JqlTokenKind::LBrace, "{"),
+        (JqlTokenKind::Identifier, "name"),
+        (JqlTokenKind::Colon, ":"),
+        (JqlTokenKind::Identifier, ".title"),
+    ])
+    .unwrap_err();
+    assert_eq!(err.kind, JqlErrorKind::UnclosedBrace);
+    assert_eq!(err.span, Some(Span { start: 0, end: 1 }));
 }
 
 #[test]

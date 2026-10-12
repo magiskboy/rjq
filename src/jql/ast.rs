@@ -35,6 +35,18 @@ impl JqlBinaryKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ObjectKey<'a> {
+    Ident(&'a str),
+    String(&'a str),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectField<'a> {
+    pub key: ObjectKey<'a>,
+    pub value: Box<JqlAstNode<'a>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum JqlAstNode<'a> {
     LParen,
     RParen,
@@ -53,6 +65,9 @@ pub enum JqlAstNode<'a> {
         kind: JqlBinaryKind,
         left: Box<JqlAstNode<'a>>,
         right: Box<JqlAstNode<'a>>,
+    },
+    Object {
+        fields: Vec<ObjectField<'a>>,
     },
 
     // Operand node
@@ -99,6 +114,31 @@ impl<'a> JqlAstNode<'a> {
             source: Box::new(source),
             dest: Box::new(dest),
         })
+    }
+
+    pub fn object(fields: Vec<ObjectField<'a>>) -> Result<JqlAstNode<'a>, JqlError> {
+        Ok(JqlAstNode::Object { fields })
+    }
+
+    pub fn object_key(token: &JqlToken, source: &'a str) -> Result<ObjectKey<'a>, JqlError> {
+        match token.kind {
+            JqlTokenKind::Identifier => Ok(ObjectKey::Ident(
+                source.get(token.span.start..token.span.end).unwrap(),
+            )),
+            JqlTokenKind::String => Ok(ObjectKey::String(
+                source
+                    .get(token.span.start + 1..token.span.end - 1)
+                    .unwrap(),
+            )),
+            other => Err(JqlError::new(
+                JqlErrorKind::UnexpectedToken {
+                    expected: ExpectedSyntax::Token(JqlTokenKind::Identifier),
+                    found: other,
+                },
+                token.span,
+                source,
+            )),
+        }
     }
 
     pub fn identifier(token: &JqlToken, source: &'a str) -> Result<JqlAstNode<'a>, JqlError> {
