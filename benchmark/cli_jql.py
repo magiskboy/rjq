@@ -1,4 +1,4 @@
-"""CLI JSON parse suite: rs-jq vs stock jq."""
+"""CLI JQL suite: rjq vs stock jq for access + filter cases."""
 
 from __future__ import annotations
 
@@ -13,6 +13,12 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from common import ROOT, BenchStats, ensure_fixture, fmt_bytes
+
+# (case_name, rjq_script, jq_script)
+CASES: dict[str, tuple[str, str]] = {
+    "access": (".[0].meta.city", ".[0].meta.city"),
+    "filter": ("filter(.active == true)", "map(select(.active == true))"),
+}
 
 
 @dataclass(frozen=True)
@@ -33,9 +39,7 @@ def _parse_time_v(stderr: str) -> int | None:
     return int(m.group(1)) * 1024 if m else None
 
 
-def _time_wrapper() -> (
-    tuple[list[str], Callable[[str], int | None]] | None
-):
+def _time_wrapper() -> tuple[list[str], Callable[[str], int | None]] | None:
     time_bin = shutil.which("time")
     candidates = ["/usr/bin/time", time_bin]
     system = platform.system()
@@ -85,7 +89,7 @@ def resolve_rs_jq(explicit: str | None) -> Path:
     if explicit:
         p = Path(explicit).expanduser().resolve()
         if not p.is_file():
-            raise SystemExit(f"rs-jq binary not found: {p}")
+            raise SystemExit(f"rjq binary not found: {p}")
         return p
     release = ROOT / "target" / "release" / "rjq"
     debug = ROOT / "target" / "debug" / "rjq"
@@ -98,7 +102,7 @@ def resolve_rs_jq(explicit: str | None) -> Path:
         )
         return debug
     raise SystemExit(
-        "rs-jq binary not found. Build with:\n"
+        "rjq binary not found. Build with:\n"
         "  cargo build --features cli --release"
     )
 
@@ -122,6 +126,7 @@ def _benchmark(
     input_bytes: int,
     warmup: int,
     runs: int,
+    notes: str = "",
 ) -> BenchStats:
     print(f"\n==> cli / {name}", file=sys.stderr)
     print(f"    cmd: {' '.join(cmd)}", file=sys.stderr)
@@ -163,6 +168,7 @@ def _benchmark(
         input_bytes=input_bytes,
         errors=errors,
         peak_rss_bytes=max(rss_vals) if rss_vals else None,
+        notes=notes,
     )
 
 
@@ -173,40 +179,42 @@ def run(
     force_generate: bool = False,
     warmup: int = 1,
     runs: int = 5,
-    script: str = ".",
+    engines: Sequence[str] = ("rjq", "jq"),
     rs_jq: str | None = None,
     jq: str | None = None,
-    only: Sequence[str] = ("rs-jq", "jq"),
 ) -> list[BenchStats]:
     path = ensure_fixture(input_path, size_mb, force_generate)
     input_bytes = path.stat().st_size
     print(f"input: {path} ({fmt_bytes(input_bytes)})", file=sys.stderr)
 
     results: list[BenchStats] = []
-    selected = list(only)
 
-    if "rs-jq" in selected:
-        binary = resolve_rs_jq(rs_jq)
-        results.append(
-            _benchmark(
-                "rs-jq",
-                [str(binary), "--input", str(path), "--script", script],
-                input_bytes=input_bytes,
-                warmup=warmup,
-                runs=runs,
-            )
-        )
+    rjq_bin = resolve_rs_jq(rs_jq) if "rjq" in engines else None
+    jq_bin = resolve_stock_jq(jq) if "jq" in engines else None
 
-    if "jq" in selected:
-        binary = resolve_stock_jq(jq)
-        results.append(
-            _benchmark(
-                "jq",
-                [str(binary), script, str(path)],
-                input_bytes=input_bytes,
-                warmup=warmup,
-                runs=runs,
+    for case in CASES:
+        rjq_script, jq_script = CASES[case]
+        if rjq_bin is not None:
+            results.append(
+                _benchmark(
+                    f"rjq/{case}",
+                    [str(rjq_bin), "--input", str(path), "--script", rjq_script],
+                    input_bytes=input_bytes,
+                    warmup=warmup,
+                    runs=runs,
+                    notes=rjq_script,
+                )
             )
-        )
+        if jq_bin is not None:
+            results.append(
+                _benchmark(
+                    f"jq/{case}",
+                    [str(jq_bin), jq_script, str(path)],
+                    input_bytes=input_bytes,
+                    warmup=warmup,
+                    runs=runs,
+                    notes=jq_script,
+                )
+            )
 
     return results

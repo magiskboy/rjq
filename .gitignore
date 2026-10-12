@@ -2,3 +2,4 @@
 .bench/
 .venv/
 benchmark/fixtures/*.json
+__pycache__

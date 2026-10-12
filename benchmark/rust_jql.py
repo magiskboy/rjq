@@ -1,4 +1,4 @@
-"""Native Rust parse suite: rs_jq vs serde_json (via bench-json-parse binary)."""
+"""Native Rust JQL suite via bench-jql (parse once, query many)."""
 
 from __future__ import annotations
 
@@ -11,20 +11,20 @@ from common import ROOT, BenchStats, ensure_fixture, fmt_bytes
 
 
 def resolve_binary() -> Path:
-    release = ROOT / "target" / "release" / "bench-json-parse"
-    debug = ROOT / "target" / "debug" / "bench-json-parse"
+    release = ROOT / "target" / "release" / "bench-jql"
+    debug = ROOT / "target" / "debug" / "bench-jql"
     if release.is_file():
         return release
     if debug.is_file():
         print(
-            "warning: using debug bench-json-parse "
-            "(prefer: cargo build --release --features bench --bin bench-json-parse)",
+            "warning: using debug bench-jql "
+            "(prefer: cargo build --release --bin bench-jql)",
             file=sys.stderr,
         )
         return debug
     raise SystemExit(
-        "bench-json-parse not found. Build with:\n"
-        "  cargo build --release --features bench --bin bench-json-parse"
+        "bench-jql not found. Build with:\n"
+        "  cargo build --release --bin bench-jql"
     )
 
 
@@ -35,14 +35,12 @@ def run(
     force_generate: bool = False,
     warmup: int = 1,
     runs: int = 5,
-    only: list[str] | None = None,
 ) -> list[BenchStats]:
     path = ensure_fixture(input_path, size_mb, force_generate)
     input_bytes = path.stat().st_size
     print(f"input: {path} ({fmt_bytes(input_bytes)})", file=sys.stderr)
 
     binary = resolve_binary()
-    parsers = only or ["rs_jq", "serde_json"]
     cmd = [
         str(binary),
         "--input",
@@ -51,15 +49,13 @@ def run(
         str(warmup),
         "--runs",
         str(runs),
-        "--only",
-        ",".join(parsers),
     ]
     print(f"    cmd: {' '.join(cmd)}", file=sys.stderr)
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.stderr:
         sys.stderr.write(proc.stderr)
     if proc.returncode != 0:
-        raise SystemExit(f"bench-json-parse failed (exit {proc.returncode})")
+        raise SystemExit(f"bench-jql failed (exit {proc.returncode})")
 
     results: list[BenchStats] = []
     for line in proc.stdout.splitlines():
@@ -75,6 +71,7 @@ def run(
                 walls=walls,
                 input_bytes=int(row.get("input_bytes") or input_bytes),
                 errors=int(row.get("errors") or 0),
+                notes=str(row.get("query") or ""),
             )
         )
     return results

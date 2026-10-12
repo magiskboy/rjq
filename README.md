@@ -30,23 +30,19 @@ cargo test
 
 ## Benchmarks
 
-All parse benchmarks live under [`benchmark/`](benchmark/README.md):
+JQL query benchmarks (access + filter) live under [`benchmark/`](benchmark/README.md):
 
-| Suite | Competitors |
+| Suite | What |
 |---|---|
-| **rust** | `rs_jq`, `serde_json` |
-| **python** | `rjson`, `json`, `orjson`, `ujson` |
-| **cli** | `rs-jq`, stock `jq` |
+| **rust** | In-process `jql_execute` (parse once): access + filter |
+| **cli** | `rjq` vs stock `jq`: access + filter |
 
 ```bash
-cargo build --release --features "cli,bench" --bin jq --bin bench-json-parse
-pip install -r benchmark/requirements.txt
-maturin develop --release   # rjson binding
+cargo build --release --features cli --bin rjq --bin bench-jql
 
-python benchmark/run.py                  # rust + python + cli (~5 MiB fixture)
+python benchmark/run.py                  # rust + cli (~5 MiB fixture)
 python benchmark/run.py --suite rust
-python benchmark/run.py --suite python --only rjson,orjson,ujson
-cargo bench --bench json_parse           # Criterion microbench
+python benchmark/run.py --suite cli
 ```
 
 ## Optimization methods

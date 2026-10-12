@@ -1,3 +1,0 @@
-# Optional peers for the Python parse suite
-orjson>=3.9
-ujson>=5.8
