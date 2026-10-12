@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 use crate::{
     jql::{
-        ast::{JqlAstNode, JqlBinaryKind},
+        ast::{JqlAstNode, JqlBinaryKind, ObjectField, ObjectKey},
         error::{JqlError, JqlErrorKind},
         proxy::Proxy,
     },
@@ -26,6 +26,7 @@ impl Engine {
             JqlAstNode::Pipe { source, dest } => Self::pipe(value, source, dest),
             JqlAstNode::Call { name, args } => Self::call(name, args, value),
             JqlAstNode::Binary { kind, left, right } => Self::binary(kind, left, right, value),
+            JqlAstNode::Object { fields } => Self::object(value, fields),
             _ => Err(op_not_support("ast node")),
         }
     }
@@ -59,6 +60,7 @@ impl Engine {
     ) -> Result<Proxy<'a>, JqlError> {
         match name {
             "filter" => Self::filter(value, &args[0]),
+            "map" => Self::map(value, &args[0]),
             "len" => Self::len(value, &args[0]),
             "sum" => Self::sum(value, &args[0]),
             other => Err(op_not_support(other)),
@@ -158,6 +160,36 @@ impl Engine {
                 found: json_value_type_name(other),
             })),
         }
+    }
+
+    fn map<'a>(value: Proxy<'a>, transform: &JqlAstNode<'_>) -> Result<Proxy<'a>, JqlError> {
+        let items = match value.data() {
+            JsonValue::Array(items) => items.clone(),
+            other => {
+                return Err(JqlError::without_span(JqlErrorKind::TypeMismatch {
+                    expected: "array",
+                    found: json_value_type_name(other),
+                }));
+            }
+        };
+        let mut mapped = Vec::new();
+        for x in items {
+            let p = Engine::execute(Proxy::owned(x), transform)?;
+            mapped.push(p.data().clone().into_owned());
+        }
+        Ok(Proxy::owned(JsonValue::array(mapped)))
+    }
+
+    fn object<'a>(value: Proxy<'a>, fields: &[ObjectField<'_>]) -> Result<Proxy<'a>, JqlError> {
+        let mut entries = Vec::with_capacity(fields.len());
+        for field in fields {
+            let key = match &field.key {
+                ObjectKey::Ident(k) | ObjectKey::String(k) => (*k).to_string(),
+            };
+            let field_value = Engine::execute(value.clone(), &field.value)?;
+            entries.push((key, field_value.data().clone().into_owned()));
+        }
+        Ok(Proxy::owned(JsonValue::object(entries)))
     }
 }
 

@@ -401,10 +401,41 @@ fn whitespace_other_than_space_is_an_error() {
 }
 
 #[test]
+fn braces_colon_and_comma() {
+    assert_eq!(run("{"), Ok(vec![tok(JqlTokenKind::LBrace, 0, 1)]));
+    assert_eq!(run("}"), Ok(vec![tok(JqlTokenKind::RBrace, 0, 1)]));
+    assert_eq!(run(":"), Ok(vec![tok(JqlTokenKind::Colon, 0, 1)]));
+    assert_eq!(run(","), Ok(vec![tok(JqlTokenKind::Comma, 0, 1)]));
+    assert_eq!(
+        run("{ name: .title, pay: .money }"),
+        Ok(vec![
+            tok(JqlTokenKind::LBrace, 0, 1),
+            tok(JqlTokenKind::Identifier, 2, 6),
+            tok(JqlTokenKind::Colon, 6, 7),
+            tok(JqlTokenKind::Identifier, 8, 14),
+            tok(JqlTokenKind::Comma, 14, 15),
+            tok(JqlTokenKind::Identifier, 16, 19),
+            tok(JqlTokenKind::Colon, 19, 20),
+            tok(JqlTokenKind::Identifier, 21, 27),
+            tok(JqlTokenKind::RBrace, 28, 29),
+        ])
+    );
+}
+
+#[test]
+fn access_paths_still_absorb_braces_colon_and_comma() {
+    for source in [".person{name,age}", ".jobs[1:3]", ".jobs[0,2]"] {
+        assert_eq!(
+            run(source),
+            Ok(vec![tok(JqlTokenKind::Identifier, 0, source.len())]),
+            "source {source:?}"
+        );
+    }
+}
+
+#[test]
 fn unknown_characters_are_errors() {
-    for source in [
-        "@", "#", "{", "}", "[", "]", ",", "+", "-", "'", "é", "-1", "[0]",
-    ] {
+    for source in ["@", "#", "[", "]", "+", "-", "'", "é", "-1", "[0]"] {
         assert_invalid(source);
     }
 }

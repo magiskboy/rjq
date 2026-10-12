@@ -17,6 +17,10 @@ enum JqlLexerState {
     Start,
     InLBrace,
     InRBrace,
+    InLeftBrace,
+    InRightBrace,
+    InColon,
+    InComma,
     InPipe,
     InF,
     InFa,
@@ -36,6 +40,9 @@ enum JqlLexerState {
     InString,
     CloseString,
     InIdentifier,
+    InPathIdentifier,
+    InPathInBracket,
+    InPathInBrace,
     StartEqual,
     InEqual,
     StartNotEqual,
@@ -74,8 +81,13 @@ impl<'a> JqlLexer<'a> {
                 '|' => JqlLexerState::InPipe,
                 '(' => JqlLexerState::InLBrace,
                 ')' => JqlLexerState::InRBrace,
+                '{' => JqlLexerState::InLeftBrace,
+                '}' => JqlLexerState::InRightBrace,
+                ':' => JqlLexerState::InColon,
+                ',' => JqlLexerState::InComma,
                 '0'..='9' => JqlLexerState::InNumber,
-                '.' | 'a'..='z' | 'A'..='Z' => JqlLexerState::InIdentifier,
+                '.' => JqlLexerState::InPathIdentifier,
+                'a'..='z' | 'A'..='Z' => JqlLexerState::InIdentifier,
                 ' ' => JqlLexerState::Whitespace,
                 _ => JqlLexerState::InvalidToken,
             },
@@ -154,17 +166,23 @@ impl<'a> JqlLexer<'a> {
                 _ => JqlLexerState::InvalidToken,
             },
             JqlLexerState::InIdentifier => match c {
-                'a'..='z'
-                | 'A'..='Z'
-                | '0'..='9'
-                | '['
-                | ']'
-                | '.'
-                | '{'
-                | '}'
-                | ','
-                | ':'
-                | '_' => JqlLexerState::InIdentifier,
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => JqlLexerState::InIdentifier,
+                _ => JqlLexerState::InvalidToken,
+            },
+            JqlLexerState::InPathIdentifier => match c {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '.' => JqlLexerState::InPathIdentifier,
+                '[' => JqlLexerState::InPathInBracket,
+                '{' => JqlLexerState::InPathInBrace,
+                _ => JqlLexerState::InvalidToken,
+            },
+            JqlLexerState::InPathInBracket => match c {
+                '0'..='9' | ':' | ',' => JqlLexerState::InPathInBracket,
+                ']' => JqlLexerState::InPathIdentifier,
+                _ => JqlLexerState::InvalidToken,
+            },
+            JqlLexerState::InPathInBrace => match c {
+                'a'..='z' | 'A'..='Z' | ',' => JqlLexerState::InPathInBrace,
+                '}' => JqlLexerState::InPathIdentifier,
                 _ => JqlLexerState::InvalidToken,
             },
             JqlLexerState::StartEqual => match c {
@@ -215,13 +233,20 @@ impl<'a> JqlLexer<'a> {
             }
             JqlLexerState::InLBrace => JqlTokenKind::LParen,
             JqlLexerState::InRBrace => JqlTokenKind::RParen,
+            JqlLexerState::InLeftBrace => JqlTokenKind::LBrace,
+            JqlLexerState::InRightBrace => JqlTokenKind::RBrace,
+            JqlLexerState::InColon => JqlTokenKind::Colon,
+            JqlLexerState::InComma => JqlTokenKind::Comma,
             JqlLexerState::InPipe => JqlTokenKind::Pipe,
             JqlLexerState::InFalse => JqlTokenKind::Boolean,
             JqlLexerState::InTrue => JqlTokenKind::Boolean,
             JqlLexerState::InNull => JqlTokenKind::Null,
             JqlLexerState::InNumber => JqlTokenKind::Number,
             JqlLexerState::CloseString => JqlTokenKind::String,
-            JqlLexerState::InIdentifier => JqlTokenKind::Identifier,
+            JqlLexerState::InIdentifier
+            | JqlLexerState::InPathIdentifier
+            | JqlLexerState::InPathInBracket
+            | JqlLexerState::InPathInBrace => JqlTokenKind::Identifier,
             JqlLexerState::InEqual => JqlTokenKind::EqualOp,
             JqlLexerState::InNotEqual => JqlTokenKind::NotEqualOp,
             JqlLexerState::InGreater => JqlTokenKind::GreaterOp,

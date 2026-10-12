@@ -42,6 +42,25 @@ fn end_to_end_access_pipeline_and_filter() {
 }
 
 #[test]
+fn end_to_end_map_and_object_construct() {
+    let data = fixture::sample();
+    assert_eq!(
+        jql_execute(&data, ".jobs | filter(.id > 2) | map({ name: .title, pay: .money })")
+            .unwrap(),
+        JsonValue::array(vec![
+            JsonValue::object([
+                ("name".to_string(), JsonValue::string("PM".to_string())),
+                ("pay".to_string(), JsonValue::number(5.0)),
+            ]),
+            JsonValue::object([
+                ("name".to_string(), JsonValue::string("SRE".to_string())),
+                ("pay".to_string(), JsonValue::number(20.0)),
+            ]),
+        ])
+    );
+}
+
+#[test]
 fn end_to_end_parse_then_execute_matches_direct_execute() {
     let data = fixture::sample();
     let query = ".people | filter(.vip == true && .score >= 70) | .[1].name";

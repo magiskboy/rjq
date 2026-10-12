@@ -98,6 +98,16 @@ Queries below run against the fixture `src/jql/sample.json`.
 .jobs | filter((.level == "senior" || .level == "mid") && .money >= 50)
 ```
 
+### Map
+
+```text
+.jobs | map(.title)
+.jobs | filter(.active == true) | map(.id)
+.matrix | map(.[0])
+.jobs | filter(.id > 2) | map({ name: .title, pay: .money })
+.company.teams | map({ name: .name, size: .size })
+```
+
 ### Compose
 
 ```text
@@ -106,4 +116,5 @@ Queries below run against the fixture `src/jql/sample.json`.
 .jobs[0,3] | filter(.active == true) | .[1].title
 .people | filter(.vip == true) | .[0].name
 .matrix | filter(.[0] > 3) | .[0].[1]
+.jobs | filter(.active == true) | map(.title)
 ```

@@ -5,7 +5,8 @@
              | <expression> <space> "|" <space> <pipeline>
 
 <expression> ::= <access>
-               | <filter>
+               | <call>
+               | <object>
 
 <access> ::= <root_access> 
            | <access_step>+
@@ -15,7 +16,17 @@
 <access_step> ::= "." <string>
                 | "." "[" <number> "]"
 
+<call> ::= <identifier> "(" <expression> ")"
+
 <filter> ::= "filter" "(" <condition> ")"
+
+<map> ::= "map" "(" <expression> ")"
+
+<object> ::= "{" "}"
+           | "{" <object_field> ("," <object_field>)* "}"
+
+<object_field> ::= <identifier> ":" <expression>
+                 | <string_value> ":" <expression>
 
 <condition> ::= <comparision>
               | "("+ <condition> ")"+ <space> <logical_op> <space> <comparision>
