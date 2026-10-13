@@ -22,6 +22,37 @@ CLI:
 cargo build --release --features cli --bin rjq
 ```
 
+### Colored output
+
+Syntax highlighting adapts to the terminal (`NO_COLOR`, `FORCE_COLOR`, `COLORTERM`, `TERM`). Disable with `--no-color`.
+
+Override colors via a one-line `RJQ_COLORS` scheme (`role=#RRGGBB`, comma-separated). Roles: `key`, `string`, `number`, `boolean`, `null`, `punct`. Omit a role to keep the default. Unset / invalid → built-in default (VS Code Dark+).
+
+```bash
+export RJQ_COLORS='key=#569CD6,string=#CE9178,number=#B5CEA8,boolean=#569CD6,null=#808080,punct=#D4D4D4'
+```
+
+Popular schemes (copy into `~/.bashrc` / `~/.zshrc` / direnv):
+
+| Theme | `RJQ_COLORS` |
+|---|---|
+| **VS Code Dark+** (default) | `key=#569CD6,string=#CE9178,number=#B5CEA8,boolean=#569CD6,null=#808080,punct=#D4D4D4` |
+| **Dracula** | `key=#8BE9FD,string=#F1FA8C,number=#BD93F9,boolean=#FF79C6,null=#6272A4,punct=#F8F8F2` |
+| **Nord** | `key=#81A1C1,string=#A3BE8C,number=#B48EAD,boolean=#EBCB8B,null=#4C566A,punct=#D8DEE9` |
+| **Solarized Dark** | `key=#268BD2,string=#2AA198,number=#D33682,boolean=#B58900,null=#586E75,punct=#839496` |
+| **Monokai** | `key=#F92672,string=#E6DB74,number=#AE81FF,boolean=#AE81FF,null=#75715E,punct=#F8F8F2` |
+| **Gruvbox Dark** | `key=#83A598,string=#B8BB26,number=#D3869B,boolean=#FABD2F,null=#928374,punct=#EBDBB2` |
+| **Catppuccin Mocha** | `key=#89B4FA,string=#A6E3A1,number=#FAB387,boolean=#CBA6F7,null=#6C7086,punct=#CDD6F4` |
+| **One Dark** | `key=#E06C75,string=#98C379,number=#D19A66,boolean=#56B6C2,null=#5C6370,punct=#ABB2BF` |
+| **Tokyo Night** | `key=#7AA2F7,string=#9ECE6A,number=#FF9E64,boolean=#BB9AF7,null=#565F89,punct=#A9B1D6` |
+
+```bash
+# example: Nord for this shell
+export RJQ_COLORS='key=#81A1C1,string=#A3BE8C,number=#B48EAD,boolean=#EBCB8B,null=#4C566A,punct=#D8DEE9'
+rjq -i data.json -s '.jobs[]'
+rjq --no-color -i data.json   # plain output
+```
+
 ## Test
 
 ```bash

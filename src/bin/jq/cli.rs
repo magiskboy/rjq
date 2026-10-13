@@ -1,6 +1,7 @@
 use std::{fs::File, io::Read, str::FromStr};
 
 use crate::error::AppError;
+use crate::render;
 use rs_jq::jql::jql_execute;
 use rs_jq::json::{json_load, value::JsonValue};
 use structopt::StructOpt;
@@ -36,6 +37,10 @@ struct Opts {
 
     #[structopt(short = "s", long, default_value = ".")]
     script: String,
+
+    /// Disable colored output (also respects `NO_COLOR`).
+    #[structopt(long = "no-color")]
+    no_color: bool,
 }
 
 impl Opts {
@@ -74,7 +79,10 @@ pub fn execute() -> Result<(), AppError> {
 
     let reader = load_input(&opts.input)?;
     let value = process(reader, &opts)?;
-    println!("{}", value);
+    render::print_value(&value, opts.no_color).map_err(|source| AppError::Io {
+        path: None,
+        source,
+    })?;
 
     Ok(())
 }

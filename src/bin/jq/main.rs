@@ -1,5 +1,7 @@
 mod cli;
+mod color;
 mod error;
+mod render;
 
 fn main() {
     if let Err(err) = cli::execute() {
