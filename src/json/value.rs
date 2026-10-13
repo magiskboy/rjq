@@ -358,7 +358,6 @@ fn parse_index(key: &str) -> Result<usize, JsonError> {
     })
 }
 
-
 #[cfg(test)]
 #[path = "../../tests/json/value.rs"]
 mod tests;
