@@ -30,12 +30,12 @@ cargo test
 
 ## Benchmarks
 
-JQL query benchmarks (access + filter) live under [`benchmark/`](benchmark/README.md):
+JQL query benchmarks (access / filter / map / filter_map on nested records) live under [`benchmark/`](benchmark/README.md):
 
 | Suite | What |
 |---|---|
-| **rust** | In-process `jql_execute` (parse once): access + filter |
-| **cli** | `rjq` vs stock `jq`: access + filter |
+| **rust** | In-process `jql_execute` (parse once) |
+| **cli** | `rjq` vs stock `jq` (process wall time) |
 
 ```bash
 cargo build --release --features cli --bin rjq --bin bench-jql
@@ -44,6 +44,19 @@ python benchmark/run.py                  # rust + cli (~5 MiB fixture)
 python benchmark/run.py --suite rust
 python benchmark/run.py --suite cli
 ```
+
+### CLI: rjq vs jq
+
+Median wall time on a ~5 MiB nested-records fixture (Darwin arm64, 5 timed runs):
+
+![CLI performance: rjq vs jq](benchmark/cli_rjq_vs_jq.png)
+
+| Case | rjq | jq | Relative |
+|---|---:|---:|---|
+| access | 57.3 ms | 95.2 ms | rjq **1.66×** faster |
+| filter | 74.4 ms | 130.7 ms | rjq **1.76×** faster |
+| map | 234.6 ms | 152.0 ms | jq **1.54×** faster |
+| filter_map | 136.6 ms | 126.1 ms | jq **1.08×** faster |
 
 ## Optimization methods
 

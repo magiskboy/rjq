@@ -1,4 +1,4 @@
-"""CLI JQL suite: rjq vs stock jq for access + filter cases."""
+"""CLI JQL suite: rjq vs stock jq for access / filter / map cases."""
 
 from __future__ import annotations
 
@@ -12,13 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
-from common import ROOT, BenchStats, ensure_fixture, fmt_bytes
-
-# (case_name, rjq_script, jq_script)
-CASES: dict[str, tuple[str, str]] = {
-    "access": (".[0].meta.city", ".[0].meta.city"),
-    "filter": ("filter(.active == true)", "map(select(.active == true))"),
-}
+from common import CASES, ROOT, BenchStats, ensure_fixture, fmt_bytes
 
 
 @dataclass(frozen=True)

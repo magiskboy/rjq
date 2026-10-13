@@ -3,15 +3,16 @@
 
 Suites (same fixture by default under benchmark/fixtures/):
 
-  rust       — in-process jql_execute (parse once): access + filter
-  cli        — rjq vs stock jq (process wall time): access + filter
+  rust       — in-process jql_execute (parse once)
+  cli        — rjq vs stock jq (process wall time)
   all        — rust + cli
   fixture    — only generate the shared fixture
 
-Cases (always both):
-  access  — key/path access   rjq: .[0].meta.city
-  filter  — array filter      rjq: filter(.active == true)
-                              jq:  map(select(.active == true))
+Cases (see common.CASES):
+  access      — deep nested path
+  filter      — compound filter on nested fields
+  map         — object projection from nested fields
+  filter_map  — filter then map pipeline
 
 Prerequisites:
   cargo build --release --features cli --bin rjq --bin bench-jql
@@ -34,7 +35,7 @@ from typing import Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import ROOT, ensure_fixture, print_report  # noqa: E402
+from common import CASES, ROOT, ensure_fixture, print_report  # noqa: E402
 import cli_jql  # noqa: E402
 import rust_jql  # noqa: E402
 
@@ -105,7 +106,7 @@ def maybe_build(args: argparse.Namespace, suites: list[str]) -> None:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="JQL query benchmarks (access + filter).",
+        description="JQL query benchmarks (access, filter, map, filter_map).",
     )
     p.add_argument(
         "--suite",
@@ -190,7 +191,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if results:
         case_notes = [
             f"  {c}: rjq `{rjq_q}`  |  jq `{jq_q}`"
-            for c, (rjq_q, jq_q) in cli_jql.CASES.items()
+            for c, (rjq_q, jq_q) in CASES.items()
         ]
         print_report(
             results,
@@ -198,7 +199,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             extra_lines=[
                 f"fixture  : {fixture}",
                 f"suites   : {', '.join(suites)}",
-                "cases    : access, filter",
+                f"cases    : {', '.join(CASES)}",
                 *case_notes,
             ],
             baseline_name="access",

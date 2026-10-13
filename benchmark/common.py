@@ -14,26 +14,84 @@ ROOT = Path(__file__).resolve().parents[1]
 BENCH_DIR = Path(__file__).resolve().parent
 FIXTURES_DIR = BENCH_DIR / "fixtures"
 
+# Bump when the generated record shape changes so stale fixtures are not reused.
+FIXTURE_SCHEMA = "records_v2"
+
+# (case_name, rjq_script, jq_script) — keep in sync with benchmark/rust/jql_query.rs
+CASES: dict[str, tuple[str, str]] = {
+    "access": (
+        ".[0].profile.prefs.theme",
+        ".[0].profile.prefs.theme",
+    ),
+    "filter": (
+        "filter(.active == true && .meta.level > 5 && .score > 50)",
+        "map(select(.active == true and .meta.level > 5 and .score > 50))",
+    ),
+    "map": (
+        "map({ id: .id, city: .meta.city, roles: .profile.roles, lat: .meta.geo.lat })",
+        "map({ id: .id, city: .meta.city, roles: .profile.roles, lat: .meta.geo.lat })",
+    ),
+    "filter_map": (
+        "filter(.active == true) | map({ name: .name, city: .meta.city, sku: .orders[0].sku })",
+        "map(select(.active == true)) | map({ name: .name, city: .meta.city, sku: .orders[0].sku })",
+    ),
+}
+
 
 def generate_json(target_bytes: int, seed: int = 1) -> str:
-    """Build a compact JSON array of objects until size >= target_bytes."""
+    """Build a compact JSON array of nested records until size >= target_bytes.
+
+    Each item mixes scalars, null, string/number arrays, and nested objects so
+    access / filter / map cases exercise realistic jq-like workloads.
+    """
     items: list[dict[str, Any]] = []
     i = seed
+    cities = ("HN", "HCM", "DN", "HP", "CT")
+    themes = ("dark", "light", "system")
+    roles_pool = ("user", "admin", "ops", "viewer")
     while True:
         batch = []
         for _ in range(200):
+            n_tags = i % 5
+            n_orders = 1 + (i % 3)
+            n_roles = 1 + (i % 3)
             batch.append(
                 {
                     "id": i,
                     "name": f"user-{i}",
                     "active": i % 2 == 0,
                     "score": (i * 17) % 10_000 / 100.0,
-                    "tags": [f"t{j}" for j in range(i % 5)],
+                    "tags": [f"t{j}" for j in range(n_tags)],
                     "meta": {
                         "city": f"city-{i % 50}",
                         "level": i % 10,
+                        "geo": {
+                            "lat": (i % 180) - 90 + (i % 100) / 100.0,
+                            "lon": (i % 360) - 180 + (i % 100) / 100.0,
+                        },
                         "note": "x" * (8 + (i % 24)),
                     },
+                    "orders": [
+                        {
+                            "sku": f"{cities[i % len(cities)]}-{(i + k) % 1000:03d}",
+                            "qty": 1 + ((i + k) % 5),
+                            "price": ((i * 13 + k * 7) % 5000) / 100.0,
+                            "paid": (i + k) % 3 != 0,
+                        }
+                        for k in range(n_orders)
+                    ],
+                    "profile": {
+                        "email": f"user-{i}@example.com",
+                        "roles": [
+                            roles_pool[(i + r) % len(roles_pool)] for r in range(n_roles)
+                        ],
+                        "prefs": {
+                            "theme": themes[i % len(themes)],
+                            "notify": i % 3 == 0,
+                        },
+                    },
+                    "metrics": [((i + m) * 3) % 100 / 10.0 for m in range(i % 4)],
+                    "extra": None if i % 7 == 0 else {"ok": True, "n": i % 9},
                 }
             )
             i += 1
@@ -52,7 +110,7 @@ def ensure_fixture(path: Path | None, size_mb: float, force: bool) -> Path:
         return resolved
 
     FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
-    out = FIXTURES_DIR / f"fixture_{size_mb:g}mb.json"
+    out = FIXTURES_DIR / f"fixture_{FIXTURE_SCHEMA}_{size_mb:g}mb.json"
     target = int(size_mb * 1024 * 1024)
     if out.exists() and not force and out.stat().st_size >= target:
         return out
@@ -214,5 +272,6 @@ def print_report(
     print("notes:")
     print("  - rust suite: JSON is parsed once; timed loops are jql_execute only.")
     print("  - cli suite: end-to-end process time (parse + query + process overhead).")
-    print("  - filter jq script uses map(select(...)) as the closest stock-jq form.")
+    print("  - filter jq script uses map(select(...)); jq uses `and`/`or` (not &&/||).")
+    print("  - fixture records mix nested objects, arrays, scalars, and null.")
     print("=" * 78)

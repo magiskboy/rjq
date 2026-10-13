@@ -1,12 +1,14 @@
 //! One-shot wall-time bench for JQL query cases (parse once, query many).
 //!
-//! Cases:
-//! - `access` — key/path access: `.[0].meta.city`
-//! - `filter` — array filter: `filter(.active == true)`
+//! Cases (keep scripts in sync with `benchmark/common.py` `CASES`):
+//! - `access` — deep nested path
+//! - `filter` — compound filter on nested fields
+//! - `map` — object projection from nested fields
+//! - `filter_map` — filter then map pipeline
 //!
 //! ```text
 //! cargo run --release --bin bench-jql -- \
-//!   --input benchmark/fixtures/fixture_5mb.json --warmup 1 --runs 5
+//!   --input benchmark/fixtures/fixture_records_v2_5mb.json --warmup 1 --runs 5
 //! ```
 //!
 //! Prints one JSON object per line (machine-readable for `benchmark/run.py`).
@@ -19,10 +21,21 @@ use std::time::Instant;
 use rs_jq::jql::jql_execute;
 use rs_jq::json::json_load_slice;
 
-const CASE_ACCESS: &str = "access";
-const CASE_FILTER: &str = "filter";
-const QUERY_ACCESS: &str = ".[0].meta.city";
-const QUERY_FILTER: &str = "filter(.active == true)";
+const CASES: &[(&str, &str)] = &[
+    ("access", ".[0].profile.prefs.theme"),
+    (
+        "filter",
+        "filter(.active == true && .meta.level > 5 && .score > 50)",
+    ),
+    (
+        "map",
+        "map({ id: .id, city: .meta.city, roles: .profile.roles, lat: .meta.geo.lat })",
+    ),
+    (
+        "filter_map",
+        "filter(.active == true) | map({ name: .name, city: .meta.city, sku: .orders[0].sku })",
+    ),
+];
 
 fn median(mut vals: Vec<f64>) -> f64 {
     if vals.is_empty() {
@@ -180,12 +193,7 @@ fn main() {
         }
     };
 
-    let cases: &[(&str, &str)] = &[
-        (CASE_ACCESS, QUERY_ACCESS),
-        (CASE_FILTER, QUERY_FILTER),
-    ];
-
-    for (case, query) in cases {
+    for (case, query) in CASES {
         eprintln!("\n==> rust / {case}");
         eprintln!("    query: {query}");
         let walls = time_runs(warmup, runs, || {
