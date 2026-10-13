@@ -3,7 +3,7 @@ use crate::{
         error::{JqlError, JqlErrorKind},
         token::{JqlToken, JqlTokenKind},
     },
-    {Source, Span},
+    Source, Span,
 };
 
 #[derive(Debug, Clone)]
@@ -15,6 +15,8 @@ pub struct JqlLexer<'a> {
 #[derive(Debug, Clone, PartialEq, Copy)]
 enum JqlLexerState {
     Start,
+
+    // Delimiters
     InLBrace,
     InRBrace,
     InLeftBrace,
@@ -22,6 +24,8 @@ enum JqlLexerState {
     InColon,
     InComma,
     InPipe,
+
+    // Literals: false / true / null (prefix states)
     InF,
     InFa,
     InFal,
@@ -39,10 +43,14 @@ enum JqlLexerState {
     OpenString,
     InString,
     CloseString,
+
+    // Identifiers & paths
     InIdentifier,
     InPathIdentifier,
     InPathInBracket,
     InPathInBrace,
+
+    // Operators
     StartEqual,
     InEqual,
     StartNotEqual,
@@ -54,6 +62,7 @@ enum JqlLexerState {
     StartAnd,
     InAnd,
     InOr,
+
     Whitespace,
     InvalidToken,
 }
@@ -63,6 +72,29 @@ impl<'a> JqlLexer<'a> {
         Self {
             index: 0,
             source: Source::new(source),
+        }
+    }
+
+    /// Alphanumeric continuation used while matching keyword prefixes (`true`/`false`/`null`).
+    fn is_keyword_ident_char(c: char) -> bool {
+        matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9')
+    }
+
+    fn continue_keyword(expected: char, next: JqlLexerState, c: char) -> JqlLexerState {
+        if c == expected {
+            next
+        } else if Self::is_keyword_ident_char(c) {
+            JqlLexerState::InIdentifier
+        } else {
+            JqlLexerState::InvalidToken
+        }
+    }
+
+    fn keyword_tail_or_ident(c: char) -> JqlLexerState {
+        if Self::is_keyword_ident_char(c) {
+            JqlLexerState::InIdentifier
+        } else {
+            JqlLexerState::InvalidToken
         }
     }
 
@@ -91,6 +123,7 @@ impl<'a> JqlLexer<'a> {
                 ' ' => JqlLexerState::Whitespace,
                 _ => JqlLexerState::InvalidToken,
             },
+
             JqlLexerState::InPipe => match c {
                 '|' => JqlLexerState::InOr,
                 _ => JqlLexerState::InvalidToken,
@@ -103,68 +136,23 @@ impl<'a> JqlLexer<'a> {
                 '"' => JqlLexerState::CloseString,
                 _ => JqlLexerState::InString,
             },
-            JqlLexerState::InT => match c {
-                'r' => JqlLexerState::InTr,
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InTr => match c {
-                'u' => JqlLexerState::InTru,
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InTru => match c {
-                'e' => JqlLexerState::InTrue,
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InTrue => match c {
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InF => match c {
-                'a' => JqlLexerState::InFa,
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InFa => match c {
-                'l' => JqlLexerState::InFal,
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InFal => match c {
-                's' => JqlLexerState::InFals,
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InFals => match c {
-                'e' => JqlLexerState::InFalse,
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InFalse => match c {
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InN => match c {
-                'u' => JqlLexerState::InNu,
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InNu => match c {
-                'l' => JqlLexerState::InNul,
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InNul => match c {
-                'l' => JqlLexerState::InNull,
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InNull => match c {
-                'a'..='z' | 'A'..='Z' | '0'..='9' => JqlLexerState::InIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
+
+            JqlLexerState::InT => Self::continue_keyword('r', JqlLexerState::InTr, c),
+            JqlLexerState::InTr => Self::continue_keyword('u', JqlLexerState::InTru, c),
+            JqlLexerState::InTru => Self::continue_keyword('e', JqlLexerState::InTrue, c),
+            JqlLexerState::InTrue => Self::keyword_tail_or_ident(c),
+
+            JqlLexerState::InF => Self::continue_keyword('a', JqlLexerState::InFa, c),
+            JqlLexerState::InFa => Self::continue_keyword('l', JqlLexerState::InFal, c),
+            JqlLexerState::InFal => Self::continue_keyword('s', JqlLexerState::InFals, c),
+            JqlLexerState::InFals => Self::continue_keyword('e', JqlLexerState::InFalse, c),
+            JqlLexerState::InFalse => Self::keyword_tail_or_ident(c),
+
+            JqlLexerState::InN => Self::continue_keyword('u', JqlLexerState::InNu, c),
+            JqlLexerState::InNu => Self::continue_keyword('l', JqlLexerState::InNul, c),
+            JqlLexerState::InNul => Self::continue_keyword('l', JqlLexerState::InNull, c),
+            JqlLexerState::InNull => Self::keyword_tail_or_ident(c),
+
             JqlLexerState::InIdentifier => match c {
                 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => JqlLexerState::InIdentifier,
                 _ => JqlLexerState::InvalidToken,
@@ -185,6 +173,7 @@ impl<'a> JqlLexer<'a> {
                 '}' => JqlLexerState::InPathIdentifier,
                 _ => JqlLexerState::InvalidToken,
             },
+
             JqlLexerState::StartEqual => match c {
                 '=' => JqlLexerState::InEqual,
                 _ => JqlLexerState::InvalidToken,
@@ -205,6 +194,7 @@ impl<'a> JqlLexer<'a> {
                 '&' => JqlLexerState::InAnd,
                 _ => JqlLexerState::InvalidToken,
             },
+
             _ => JqlLexerState::InvalidToken,
         };
 
@@ -216,6 +206,7 @@ impl<'a> JqlLexer<'a> {
 
     fn accept_state(&self, state: &JqlLexerState, start: usize, end: usize) -> Option<JqlToken> {
         let kind = match state {
+            // Incomplete keyword prefixes: accept as identifier only at EOF.
             JqlLexerState::InF
             | JqlLexerState::InFa
             | JqlLexerState::InFal
@@ -231,6 +222,7 @@ impl<'a> JqlLexer<'a> {
                 }
                 return None;
             }
+
             JqlLexerState::InLBrace => JqlTokenKind::LParen,
             JqlLexerState::InRBrace => JqlTokenKind::RParen,
             JqlLexerState::InLeftBrace => JqlTokenKind::LBrace,
@@ -238,8 +230,7 @@ impl<'a> JqlLexer<'a> {
             JqlLexerState::InColon => JqlTokenKind::Colon,
             JqlLexerState::InComma => JqlTokenKind::Comma,
             JqlLexerState::InPipe => JqlTokenKind::Pipe,
-            JqlLexerState::InFalse => JqlTokenKind::Boolean,
-            JqlLexerState::InTrue => JqlTokenKind::Boolean,
+            JqlLexerState::InFalse | JqlLexerState::InTrue => JqlTokenKind::Boolean,
             JqlLexerState::InNull => JqlTokenKind::Null,
             JqlLexerState::InNumber => JqlTokenKind::Number,
             JqlLexerState::CloseString => JqlTokenKind::String,
@@ -267,13 +258,7 @@ impl<'a> JqlLexer<'a> {
 
     fn next_token(&mut self) -> Result<JqlToken, JqlError> {
         if self.index == self.source.len() {
-            return Ok(JqlToken {
-                kind: JqlTokenKind::Stop,
-                span: Span {
-                    start: self.index,
-                    end: self.index,
-                },
-            });
+            return Ok(JqlToken::new(JqlTokenKind::Stop, self.index, self.index));
         }
 
         let start = self.index;
@@ -286,19 +271,18 @@ impl<'a> JqlLexer<'a> {
         while position < self.source.len() {
             c = self.source.char_at(position).unwrap();
 
-            let next_state = self.transition_table(&state, c);
-            if next_state.is_none() {
+            let Some(next_state) = self.transition_table(&state, c) else {
                 break;
+            };
+
+            let end = position + c.len_utf8();
+            if let Some(token) = self.accept_state(&next_state, self.index, end) {
+                last_accept_token = Some(token);
+                last_accept_position = end;
             }
 
-            if let Some(token) =
-                self.accept_state(&next_state.unwrap(), self.index, position + c.len_utf8())
-            {
-                last_accept_token = Some(token);
-                last_accept_position = position + c.len_utf8();
-            }
-            state = next_state.unwrap().clone();
-            position += c.len_utf8();
+            state = next_state;
+            position = end;
         }
 
         if let Some(token) = last_accept_token {
@@ -306,7 +290,6 @@ impl<'a> JqlLexer<'a> {
             if token.kind == JqlTokenKind::Whitespace {
                 return self.next_token();
             }
-
             return Ok(token);
         }
 
@@ -323,7 +306,8 @@ impl<'a> JqlLexer<'a> {
 
     pub fn tokenize(source: &str) -> Result<Vec<JqlToken>, JqlError> {
         let mut lexer = JqlLexer::new(source);
-        let mut tokens: Vec<JqlToken> = vec![];
+        let mut tokens = Vec::new();
+
         loop {
             let token = lexer.next_token()?;
             if token.kind == JqlTokenKind::Stop {
@@ -331,10 +315,10 @@ impl<'a> JqlLexer<'a> {
             }
             tokens.push(token);
         }
+
         Ok(tokens)
     }
 }
-
 
 #[cfg(test)]
 #[path = "../../tests/jql/lexer.rs"]

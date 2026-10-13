@@ -1,21 +1,70 @@
+use std::collections::VecDeque;
+
 use crate::Span;
 use crate::jql::{
-    ast::{
-        JqlAstNode::{self},
-        JqlBinaryKind, ObjectField,
-    },
+    ast::{JqlAstNode, JqlBinaryKind, ObjectField},
     error::{ExpectedSyntax, JqlError, JqlErrorKind},
-    token::{
-        JqlToken,
-        JqlTokenKind::{self},
-    },
+    token::{JqlToken, JqlTokenKind},
 };
-use std::collections::VecDeque;
 
 #[derive(Debug, Clone)]
 pub struct JqlParser;
 
 impl JqlParser {
+    fn unexpected_token(
+        expected: ExpectedSyntax,
+        found: JqlTokenKind,
+        span: Span,
+        source: &str,
+    ) -> JqlError {
+        JqlError::new(
+            JqlErrorKind::UnexpectedToken { expected, found },
+            span,
+            source,
+        )
+    }
+
+    fn missing_operand(span: Span, source: &str) -> JqlError {
+        JqlError::new(JqlErrorKind::MissingOperand, span, source)
+    }
+
+    fn apply_operator<'a>(
+        op: JqlTokenKind,
+        left: JqlAstNode<'a>,
+        right: JqlAstNode<'a>,
+    ) -> Result<JqlAstNode<'a>, JqlError> {
+        match op {
+            JqlTokenKind::Pipe => JqlAstNode::pipe(left, right),
+            _ => JqlAstNode::binary(JqlBinaryKind::from_token_kind(&op)?, left, right),
+        }
+    }
+
+    /// Scan forward from `start` until the matching closer for an opener already counted
+    /// in `depth` (typically 1). Returns the index of the closer, or `None` if unclosed.
+    fn find_matching_close(
+        tokens: &[JqlToken],
+        start: usize,
+        open: JqlTokenKind,
+        close: JqlTokenKind,
+        mut depth: i32,
+    ) -> Option<usize> {
+        let mut end = start;
+        while end < tokens.len() {
+            match tokens[end].kind {
+                kind if kind == open => depth += 1,
+                kind if kind == close => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(end);
+                    }
+                }
+                _ => {}
+            }
+            end += 1;
+        }
+        None
+    }
+
     fn parse_object<'a>(tokens: &[JqlToken], source: &'a str) -> Result<JqlAstNode<'a>, JqlError> {
         if tokens.is_empty() {
             return JqlAstNode::object(vec![]);
@@ -30,21 +79,17 @@ impl JqlParser {
             idx += 1;
 
             let colon = tokens.get(idx).ok_or_else(|| {
-                JqlError::new(
-                    JqlErrorKind::UnexpectedToken {
-                        expected: ExpectedSyntax::Token(JqlTokenKind::Colon),
-                        found: JqlTokenKind::Stop,
-                    },
+                Self::unexpected_token(
+                    ExpectedSyntax::Token(JqlTokenKind::Colon),
+                    JqlTokenKind::Stop,
                     key_token.span,
                     source,
                 )
             })?;
             if colon.kind != JqlTokenKind::Colon {
-                return Err(JqlError::new(
-                    JqlErrorKind::UnexpectedToken {
-                        expected: ExpectedSyntax::Token(JqlTokenKind::Colon),
-                        found: colon.kind,
-                    },
+                return Err(Self::unexpected_token(
+                    ExpectedSyntax::Token(JqlTokenKind::Colon),
+                    colon.kind,
                     colon.span,
                     source,
                 ));
@@ -71,7 +116,7 @@ impl JqlParser {
                 return Err(JqlError::new(JqlErrorKind::InvalidExpression, span, source));
             }
 
-            let value = Self::parse(&tokens[value_start..idx].to_vec(), source)?;
+            let value = Self::parse(&tokens[value_start..idx], source)?;
             fields.push(ObjectField {
                 key,
                 value: Box::new(value),
@@ -79,11 +124,9 @@ impl JqlParser {
 
             if idx < tokens.len() {
                 if tokens[idx].kind != JqlTokenKind::Comma {
-                    return Err(JqlError::new(
-                        JqlErrorKind::UnexpectedToken {
-                            expected: ExpectedSyntax::Token(JqlTokenKind::Comma),
-                            found: tokens[idx].kind,
-                        },
+                    return Err(Self::unexpected_token(
+                        ExpectedSyntax::Token(JqlTokenKind::Comma),
+                        tokens[idx].kind,
                         tokens[idx].span,
                         source,
                     ));
@@ -102,10 +145,42 @@ impl JqlParser {
         JqlAstNode::object(fields)
     }
 
-    pub fn parse<'a>(tokens: &Vec<JqlToken>, source: &'a str) -> Result<JqlAstNode<'a>, JqlError> {
+    fn parse_call<'a>(
+        tokens: &[JqlToken],
+        idx: usize,
+        token: JqlToken,
+        source: &'a str,
+    ) -> Result<(JqlAstNode<'a>, usize), JqlError> {
+        let Some(next_token) = tokens.get(idx + 1) else {
+            return Ok((JqlAstNode::call(&token, vec![], source)?, idx + 1));
+        };
+
+        if next_token.kind != JqlTokenKind::LParen {
+            return Ok((JqlAstNode::call(&token, vec![], source)?, idx + 1));
+        }
+
+        let Some(end) = Self::find_matching_close(
+            tokens,
+            idx + 2,
+            JqlTokenKind::LParen,
+            JqlTokenKind::RParen,
+            1,
+        ) else {
+            return Err(JqlError::new(
+                JqlErrorKind::UnclosedParen,
+                token.span,
+                source,
+            ));
+        };
+
+        let arg = Self::parse(&tokens[idx + 2..end], source)?;
+        let node = JqlAstNode::call(&token, vec![arg], source)?;
+        Ok((node, end + 1))
+    }
+
+    pub fn parse<'a>(tokens: &[JqlToken], source: &'a str) -> Result<JqlAstNode<'a>, JqlError> {
         let mut operator_stack = VecDeque::<JqlToken>::new();
         let mut operand_stack = VecDeque::<JqlAstNode>::new();
-
         let mut idx: usize = 0;
 
         while idx < tokens.len() {
@@ -113,36 +188,29 @@ impl JqlParser {
 
             match token.kind {
                 JqlTokenKind::LBrace => {
-                    let mut depth = 1;
-                    let mut end = idx + 1;
-                    while end < tokens.len() {
-                        match tokens[end].kind {
-                            JqlTokenKind::LBrace => depth += 1,
-                            JqlTokenKind::RBrace => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                        end += 1;
-                    }
-                    if depth != 0 {
+                    let Some(end) = Self::find_matching_close(
+                        tokens,
+                        idx + 1,
+                        JqlTokenKind::LBrace,
+                        JqlTokenKind::RBrace,
+                        1,
+                    ) else {
                         return Err(JqlError::new(
                             JqlErrorKind::UnclosedBrace,
                             token.span,
                             source,
                         ));
-                    }
-                    let inner = tokens[idx + 1..end].to_vec();
-                    operand_stack.push_front(Self::parse_object(&inner, source)?);
+                    };
+                    let inner = &tokens[idx + 1..end];
+                    operand_stack.push_front(Self::parse_object(inner, source)?);
                     idx = end + 1;
                 }
+
                 JqlTokenKind::LParen => {
                     idx += 1;
                     operator_stack.push_front(token);
                 }
+
                 JqlTokenKind::RParen => {
                     idx += 1;
                     while let Some(op) = operator_stack.pop_front() {
@@ -150,23 +218,17 @@ impl JqlParser {
                             break;
                         }
 
-                        let right = operand_stack.pop_front().ok_or_else(|| {
-                            JqlError::new(JqlErrorKind::MissingOperand, token.span, source)
-                        })?;
-                        let left = operand_stack.pop_front().ok_or_else(|| {
-                            JqlError::new(JqlErrorKind::MissingOperand, token.span, source)
-                        })?;
-                        let node = match op.kind {
-                            JqlTokenKind::Pipe => JqlAstNode::pipe(left, right)?,
-                            _ => JqlAstNode::binary(
-                                JqlBinaryKind::from_token_kind(&op.kind)?,
-                                left,
-                                right,
-                            )?,
-                        };
+                        let right = operand_stack
+                            .pop_front()
+                            .ok_or_else(|| Self::missing_operand(token.span, source))?;
+                        let left = operand_stack
+                            .pop_front()
+                            .ok_or_else(|| Self::missing_operand(token.span, source))?;
+                        let node = Self::apply_operator(op.kind, left, right)?;
                         operand_stack.push_front(node);
                     }
                 }
+
                 JqlTokenKind::Null => {
                     idx += 1;
                     operand_stack.push_front(JqlAstNode::null(&token)?);
@@ -183,58 +245,20 @@ impl JqlParser {
                     idx += 1;
                     operand_stack.push_front(JqlAstNode::number(&token, source)?);
                 }
+
                 JqlTokenKind::Identifier => {
-                    // determine an access
                     let token = tokens.get(idx).unwrap();
                     let content = source.get(token.span.start..token.span.end).unwrap();
                     if content.starts_with('.') {
-                        operand_stack.push_front(JqlAstNode::identifier(&token, source)?);
+                        operand_stack.push_front(JqlAstNode::identifier(token, source)?);
                         idx += 1;
                     } else {
-                        //parse as a function, it may be paren or not
-                        if let Some(next_token) = tokens.get(idx + 1) {
-                            if next_token.kind == JqlTokenKind::LParen {
-                                let mut depth = 1;
-                                let mut end = idx + 2;
-                                while end < tokens.len() {
-                                    match tokens[end].kind {
-                                        JqlTokenKind::LParen => depth += 1,
-                                        JqlTokenKind::RParen => {
-                                            depth -= 1;
-                                            if depth == 0 {
-                                                break;
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                    end += 1;
-                                }
-                                if depth == 0 {
-                                    let arg_tokens = tokens[idx + 2..end].to_vec();
-                                    let arg = Self::parse(&arg_tokens, source)?;
-                                    operand_stack.push_front(JqlAstNode::call(
-                                        &token,
-                                        vec![arg],
-                                        source,
-                                    )?);
-                                    idx = end + 1;
-                                } else {
-                                    return Err(JqlError::new(
-                                        JqlErrorKind::UnclosedParen,
-                                        token.span,
-                                        source,
-                                    ));
-                                }
-                            } else {
-                                idx += 1;
-                                operand_stack.push_front(JqlAstNode::call(&token, vec![], source)?);
-                            }
-                        } else {
-                            idx += 1;
-                            operand_stack.push_front(JqlAstNode::call(&token, vec![], source)?);
-                        }
+                        let (node, next_idx) = Self::parse_call(tokens, idx, *token, source)?;
+                        operand_stack.push_front(node);
+                        idx = next_idx;
                     }
                 }
+
                 JqlTokenKind::Pipe
                 | JqlTokenKind::LessOp
                 | JqlTokenKind::LessEqualOp
@@ -246,21 +270,13 @@ impl JqlParser {
                 | JqlTokenKind::OrLogicalOp => {
                     while let Some(top) = operator_stack.pop_front() {
                         if top.kind > token.kind {
-                            let right = operand_stack.pop_front().ok_or_else(|| {
-                                JqlError::new(JqlErrorKind::MissingOperand, token.span, source)
-                            })?;
-                            let left = operand_stack.pop_front().ok_or_else(|| {
-                                JqlError::new(JqlErrorKind::MissingOperand, token.span, source)
-                            })?;
-
-                            let node = match top.kind {
-                                JqlTokenKind::Pipe => JqlAstNode::pipe(left, right)?,
-                                _ => JqlAstNode::binary(
-                                    JqlBinaryKind::from_token_kind(&top.kind)?,
-                                    left,
-                                    right,
-                                )?,
-                            };
+                            let right = operand_stack
+                                .pop_front()
+                                .ok_or_else(|| Self::missing_operand(token.span, source))?;
+                            let left = operand_stack
+                                .pop_front()
+                                .ok_or_else(|| Self::missing_operand(token.span, source))?;
+                            let node = Self::apply_operator(top.kind, left, right)?;
                             operand_stack.push_front(node);
                         } else {
                             operator_stack.push_front(top);
@@ -270,15 +286,15 @@ impl JqlParser {
                     idx += 1;
                     operator_stack.push_front(token);
                 }
+
                 JqlTokenKind::Whitespace | JqlTokenKind::Stop => {
                     idx += 1;
                 }
+
                 other => {
-                    return Err(JqlError::new(
-                        JqlErrorKind::UnexpectedToken {
-                            expected: ExpectedSyntax::Expression,
-                            found: other,
-                        },
+                    return Err(Self::unexpected_token(
+                        ExpectedSyntax::Expression,
+                        other,
                         token.span,
                         source,
                     ));
@@ -287,20 +303,13 @@ impl JqlParser {
         }
 
         while let Some(top_token) = operator_stack.pop_front() {
-            let right = operand_stack.pop_front().ok_or_else(|| {
-                JqlError::new(JqlErrorKind::MissingOperand, top_token.span, source)
-            })?;
-            let left = operand_stack.pop_front().ok_or_else(|| {
-                JqlError::new(JqlErrorKind::MissingOperand, top_token.span, source)
-            })?;
-            let node = match top_token.kind {
-                JqlTokenKind::Pipe => JqlAstNode::pipe(left, right)?,
-                _ => JqlAstNode::binary(
-                    JqlBinaryKind::from_token_kind(&top_token.kind)?,
-                    left,
-                    right,
-                )?,
-            };
+            let right = operand_stack
+                .pop_front()
+                .ok_or_else(|| Self::missing_operand(top_token.span, source))?;
+            let left = operand_stack
+                .pop_front()
+                .ok_or_else(|| Self::missing_operand(top_token.span, source))?;
+            let node = Self::apply_operator(top_token.kind, left, right)?;
             operand_stack.push_front(node);
         }
 

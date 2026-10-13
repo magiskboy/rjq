@@ -204,15 +204,15 @@ impl<'a> Proxy<'a> {
         current.get(key).map_err(JqlError::from)
     }
 
-    fn descend_ref<'b>(current: &'b JsonValue<'a>, key: &str) -> Result<&'b JsonValue<'a>, JqlError> {
+    fn descend_ref<'b>(
+        current: &'b JsonValue<'a>,
+        key: &str,
+    ) -> Result<&'b JsonValue<'a>, JqlError> {
         current.get(key).map_err(JqlError::from)
     }
 
     /// Walk a borrowed document root — results stay [`ValueRef::Borrowed`] when possible.
-    fn get_borrowed(
-        root: &'a JsonValue<'a>,
-        access: Vec<Access>,
-    ) -> Result<Proxy<'a>, JqlError> {
+    fn get_borrowed(root: &'a JsonValue<'a>, access: Vec<Access>) -> Result<Proxy<'a>, JqlError> {
         let mut current = Cow::Borrowed(root);
 
         for step in access {
@@ -248,9 +248,7 @@ impl<'a> Proxy<'a> {
                                 Cow::Borrowed(Self::descend_borrowed(v, &index.to_string())?)
                             }
                             Cow::Owned(v) => Cow::Owned(
-                                v.get(&index.to_string())
-                                    .map_err(JqlError::from)?
-                                    .clone(),
+                                v.get(&index.to_string()).map_err(JqlError::from)?.clone(),
                             ),
                         },
                         ArrayIndex::Range { start, end } => {
@@ -280,10 +278,7 @@ impl<'a> Proxy<'a> {
 
     /// Walk an owned/shared tree by reference and clone only the final node
     /// (or projection), instead of cloning the root before every descend step.
-    fn get_owned_view(
-        root: &JsonValue<'a>,
-        access: Vec<Access>,
-    ) -> Result<Proxy<'a>, JqlError> {
+    fn get_owned_view(root: &JsonValue<'a>, access: Vec<Access>) -> Result<Proxy<'a>, JqlError> {
         enum Cursor<'b, 'a> {
             Ref(&'b JsonValue<'a>),
             Owned(JsonValue<'a>),
@@ -326,9 +321,7 @@ impl<'a> Proxy<'a> {
                                 Cursor::Ref(Self::descend_ref(v, &index.to_string())?)
                             }
                             Cursor::Owned(v) => Cursor::Owned(
-                                v.get(&index.to_string())
-                                    .map_err(JqlError::from)?
-                                    .clone(),
+                                v.get(&index.to_string()).map_err(JqlError::from)?.clone(),
                             ),
                         },
                         ArrayIndex::Range { start, end } => {
@@ -368,7 +361,6 @@ impl<'a> Proxy<'a> {
 
     pub fn get(&self, ref_str: &str) -> Result<Proxy<'a>, JqlError> {
         let jref = Reference::from_str(ref_str)?;
-        // Identity (".") / no-op selection: reuse this proxy (O(1) for Borrowed/Shared).
         if is_identity_access(&jref.access) {
             return Ok(self.clone());
         }
