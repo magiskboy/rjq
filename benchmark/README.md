@@ -1,65 +1,41 @@
 # Benchmarks
 
-JQL query benchmarks comparing **rjq** with stock **jq** on nested records:
+Two scripts only:
 
-| Case | rjq script | jq script |
-|---|---|---|
-| **access** | `.[0].profile.prefs.theme` | same |
-| **filter** | `filter(.active == true && .meta.level > 5 && .score > 50)` | `map(select(.active == true and .meta.level > 5 and .score > 50))` |
-| **map** | `map({ id: .id, city: .meta.city, roles: .profile.roles, lat: .meta.geo.lat })` | same |
-| **filter_map** | `filter(.active == true) \| map({ name: .name, city: .meta.city, sku: .orders[0].sku })` | `map(select(.active == true)) \| map({ name: .name, city: .meta.city, sku: .orders[0].sku })` |
-
-| Suite | What is measured |
+| Script | What |
 |---|---|
-| **rust** | In-process `jql_execute` (JSON parsed once, outside the timed loop) |
-| **cli** | `rjq` vs stock `jq` process wall time (+ peak RSS) |
+| [`cli.py`](cli.py) | `rjq` vs stock `jq` (process wall time) → table + plot |
+| [`python.py`](python.py) | `rjson_load` (bytes) vs `rjson_loads` (str) → table |
 
-Fixtures live under `benchmark/fixtures/` (`fixture_records_v2_<N>mb.json`): array of objects with nested `meta.geo`, `orders[]`, `profile.prefs`, string/number arrays, and occasional `null`.
+## CLI (`rjq` vs `jq`)
 
-## Setup
-
-```bash
-# Rust binaries (CLI + in-process rust suite)
-cargo build --release --features cli --bin rjq --bin bench-jql
-
-# Stock jq on PATH (cli suite)
-# brew install jq   # macOS
-```
-
-## Run
+Build binaries yourself; the script does not compile anything.
 
 ```bash
-# Default: rust + cli, all cases, ~5 MiB fixture
-python benchmark/run.py
+cargo build --release --features cli --bin rjq
+# brew install jq
 
-# One suite
-python benchmark/run.py --suite rust
-python benchmark/run.py --suite cli --runs 7
-python benchmark/run.py --only rjq
+uv run --with matplotlib python benchmark/cli.py \
+  --rjq ./target/release/rjq \
+  --jq "$(which jq)"
 
-# Larger fixture / custom input
-python benchmark/run.py --size-mb 10
-python benchmark/run.py --input path/to/data.json
+# options
+uv run --with matplotlib python benchmark/cli.py \
+  --rjq ./target/release/rjq --jq "$(which jq)" \
+  --size-mb 10 --runs 7 --plot benchmark/cli_rjq_vs_jq.png
 ```
 
-`run.py` auto-builds release binaries unless `--no-build` is passed.
+Cases: **access**, **filter**, **map**, **filter_map** on nested records.
 
-## Layout
+## Python (`rjson_load` vs `rjson_loads`)
 
-```text
-benchmark/
-  run.py              # entrypoint
-  common.py           # fixtures, CASES, report helpers
-  rust_jql.py         # wraps bench-jql
-  cli_jql.py          # rjq / jq
-  fixtures/           # generated JSON (gitignored)
-  rust/
-    jql_query.rs      # bin: bench-jql
+```bash
+uv run python benchmark/python.py
+uv run python benchmark/python.py --size-mb 10 --runs 7
+uv run python benchmark/python.py --input path/to/data.json
 ```
 
 ## Notes
 
-- The **rust** suite isolates query cost (parse once). The **cli** suite is end-to-end.
-- Prefer within-suite comparisons (e.g. `rjq/filter` vs `jq/filter`).
-- Large fixtures are gitignored; regenerate with `python benchmark/run.py --suite fixture --size-mb 5`.
-- Keep `CASES` in `common.py` and the query list in `rust/jql_query.rs` in sync.
+- Default fixture (~5 MiB) is generated under `benchmark/fixtures/` when `--input` is omitted.
+- Prefer within-suite comparisons (`rjq/filter` vs `jq/filter`, or load vs loads).

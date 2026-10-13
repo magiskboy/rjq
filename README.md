@@ -19,7 +19,7 @@ cargo build
 CLI:
 
 ```bash
-cargo build --features cli
+cargo build --release --features cli --bin rjq
 ```
 
 ## Test
@@ -30,41 +30,43 @@ cargo test
 
 ## Benchmarks
 
-JQL query benchmarks (access / filter / map / filter_map on nested records) live under [`benchmark/`](benchmark/README.md):
+See [`benchmark/`](benchmark/README.md). Two scripts:
 
-| Suite | What |
+| Script | What |
 |---|---|
-| **rust** | In-process `jql_execute` (parse once) |
-| **cli** | `rjq` vs stock `jq` (process wall time) |
+| `benchmark/cli.py` | `rjq` vs stock `jq` → stdout table + plot |
+| `benchmark/python.py` | `rjson_load` (bytes) vs `rjson_loads` (str) → stdout |
 
 ```bash
-cargo build --release --features cli --bin rjq --bin bench-jql
+# CLI (build binaries yourself; pass paths)
+cargo build --release --features cli --bin rjq
+uv run --with matplotlib python benchmark/cli.py \
+  --rjq ./target/release/rjq --jq "$(which jq)"
 
-python benchmark/run.py                  # rust + cli (~5 MiB fixture)
-python benchmark/run.py --suite rust
-python benchmark/run.py --suite cli
+# Python bindings
+uv run python benchmark/python.py
 ```
 
 ### CLI: rjq vs jq
 
 Median wall time on a ~5 MiB nested-records fixture (Darwin arm64, 5 timed runs):
 
-![CLI performance: rjq vs jq](benchmark/cli_rjq_vs_jq.png)
+![CLI performance: rjq vs jq](benchmark/plot.png)
 
 | Case | rjq | jq | Relative |
 |---|---:|---:|---|
-| access | 57.3 ms | 95.2 ms | rjq **1.66×** faster |
-| filter | 74.4 ms | 130.7 ms | rjq **1.76×** faster |
-| map | 234.6 ms | 152.0 ms | jq **1.54×** faster |
-| filter_map | 136.6 ms | 126.1 ms | jq **1.08×** faster |
+| access | 55.5 ms | 93.0 ms | rjq **1.68×** faster |
+| filter | 70.7 ms | 129.3 ms | rjq **1.83×** faster |
+| map | 77.6 ms | 151.3 ms | rjq **1.95×** faster |
+| filter_map | 75.9 ms | 125.0 ms | rjq **1.65×** faster |
 
 ## Optimization methods
 
 - **`Cow` for strings (and numbers)** — JSON strings without escapes and number spellings borrow the input buffer (`Cow::Borrowed`); only unescape / `into_owned` allocate. Avoids copying every scalar into a new `String` during lex/parse.
+- **JQL `Proxy` lazy materialize** — engine intermediates are `Borrowed` / `Shared(Rc)` / `Owned` instead of deep-cloning between ops. Access and element iteration stay zero-copy on the input document; fan-out (`binary` / `object`) shares owned trees; new arrays/objects allocate only when the op builds a new shape; `into_owned` stays at CLI / `'static` boundaries.
 - **Builder straight to the target type** — `JsonBuilder` separates syntax (parser) from representation. Native path builds `JsonValue`; Python path (`PyBuilder`) emits `PyDict` / `PyList` / scalars directly — no intermediate `JsonValue` tree on the `rjson` hot path.
 - **Lazy number parse** — lexer keeps the raw digit span (`JsonNumber` + `IntegerLike` / `FloatLike`). Parse to `i64` / `f64` (or Python `int` / `float` / big `int`) only when a consumer needs a numeric value; `json_dump` can rewrite the original spelling.
 - **SIMD + NEON** — vectorized scans for string specials and non-whitespace: AVX2 on `x86_64`, NEON on Apple Silicon / `aarch64`, with scalar fallback elsewhere.
-- **Pull bytes from lexer & parser** — cursor walks the input byte slice in place (`SliceCursor` / remaining window); tokens and values borrow spans instead of accumulating a separate owned buffer of characters as the primary representation.
 
 ## Notable JQL queries
 

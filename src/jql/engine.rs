@@ -4,7 +4,7 @@ use crate::{
     jql::{
         ast::{JqlAstNode, JqlBinaryKind, ObjectField, ObjectKey},
         error::{JqlError, JqlErrorKind},
-        proxy::Proxy,
+        proxy::{Proxy, ValueRef},
     },
     json::{
         error::JsonError,
@@ -113,8 +113,10 @@ impl Engine {
         right: &JqlAstNode<'_>,
         value: Proxy<'a>,
     ) -> Result<Proxy<'a>, JqlError> {
+        // Share owned intermediates so left/right fan-out does not deep-clone twice.
+        let value = value.share();
         let left_proxy = Engine::execute(value.clone(), left)?;
-        let right_proxy = Engine::execute(value.clone(), right)?;
+        let right_proxy = Engine::execute(value, right)?;
         let left_output = left_proxy.data();
         let right_output = right_proxy.data();
         let result = match kind {
@@ -145,78 +147,138 @@ impl Engine {
     }
 
     fn filter<'a>(value: Proxy<'a>, predictive: &JqlAstNode<'_>) -> Result<Proxy<'a>, JqlError> {
-        let data = value.data();
-        match data {
-            JsonValue::Array(items) => {
-                let mut filtered = Vec::new();
-                for x in items {
-                    let p = Engine::execute(Proxy::new(x), predictive)?;
-                    if matches!(p.data(), JsonValue::True) {
-                        filtered.push(x.clone());
+        match value.data {
+            ValueRef::Borrowed(v) => match v {
+                JsonValue::Array(items) => {
+                    let mut filtered = Vec::new();
+                    for x in items {
+                        let p = Engine::execute(Proxy::new(x), predictive)?;
+                        if matches!(p.data(), JsonValue::True) {
+                            // Structure clone only; scalar Cow leaves stay borrowed.
+                            filtered.push(x.clone());
+                        }
                     }
+                    Ok(Proxy::owned(JsonValue::array(filtered)))
                 }
-                Ok(Proxy::owned(JsonValue::array(filtered)))
-            }
-            other => Err(JqlError::without_span(JqlErrorKind::TypeMismatch {
-                expected: "array",
-                found: json_value_type_name(other),
-            })),
+                other => Err(type_mismatch_array(other)),
+            },
+            ValueRef::Shared(rc) => filter_items(rc.as_ref(), predictive),
+            ValueRef::Owned(v) => match v {
+                JsonValue::Array(items) => {
+                    // Unique owner: share each item for the predicate, then move it
+                    // back out on match (Rc::try_unwrap) instead of cloning twice.
+                    let mut filtered = Vec::new();
+                    for x in items {
+                        let item = Proxy::owned(x).share();
+                        let keep = matches!(
+                            Engine::execute(item.clone(), predictive)?.data(),
+                            JsonValue::True
+                        );
+                        if keep {
+                            filtered.push(item.into_value());
+                        }
+                    }
+                    Ok(Proxy::owned(JsonValue::array(filtered)))
+                }
+                other => Err(type_mismatch_array(&other)),
+            },
         }
     }
 
     fn map<'a>(value: Proxy<'a>, transform: &JqlAstNode<'_>) -> Result<Proxy<'a>, JqlError> {
-        let items = match value.data() {
-            JsonValue::Array(items) => items.clone(),
-            other => {
-                return Err(JqlError::without_span(JqlErrorKind::TypeMismatch {
-                    expected: "array",
-                    found: json_value_type_name(other),
-                }));
-            }
-        };
-        let mut mapped = Vec::new();
-        for x in items {
-            let p = Engine::execute(Proxy::owned(x), transform)?;
-            mapped.push(p.data().clone().into_owned());
+        match value.data {
+            ValueRef::Borrowed(v) => match v {
+                JsonValue::Array(items) => {
+                    let mut mapped = Vec::with_capacity(items.len());
+                    for x in items {
+                        // Keep element borrowed so nested access stays zero-copy.
+                        let p = Engine::execute(Proxy::new(x), transform)?;
+                        mapped.push(p.into_value());
+                    }
+                    Ok(Proxy::owned(JsonValue::array(mapped)))
+                }
+                other => Err(type_mismatch_array(other)),
+            },
+            ValueRef::Shared(rc) => map_items(rc.as_ref(), transform),
+            ValueRef::Owned(v) => match v {
+                JsonValue::Array(items) => {
+                    let mut mapped = Vec::with_capacity(items.len());
+                    for x in items {
+                        let p = Engine::execute(Proxy::owned(x), transform)?;
+                        mapped.push(p.into_value());
+                    }
+                    Ok(Proxy::owned(JsonValue::array(mapped)))
+                }
+                other => Err(type_mismatch_array(&other)),
+            },
         }
-        Ok(Proxy::owned(JsonValue::array(mapped)))
     }
 
     fn object<'a>(value: Proxy<'a>, fields: &[ObjectField<'_>]) -> Result<Proxy<'a>, JqlError> {
+        let value = value.share();
         let mut entries = Vec::with_capacity(fields.len());
         for field in fields {
             let key = match &field.key {
                 ObjectKey::Ident(k) | ObjectKey::String(k) => (*k).to_string(),
             };
             let field_value = Engine::execute(value.clone(), &field.value)?;
-            entries.push((key, field_value.data().clone().into_owned()));
+            // Keep document borrows; do not force 'static via into_owned.
+            entries.push((key, field_value.into_value()));
         }
         Ok(Proxy::owned(JsonValue::object(entries)))
     }
 
     fn first<'a>(value: Proxy<'a>) -> Result<Proxy<'a>, JqlError> {
-        let ret = match value.data() {
-            JsonValue::Array(items) => match items.first() {
-                Some(x) => x.clone(),
-                _ => JsonValue::null(),
-            },
-            _ => JsonValue::null(),
-        };
-
-        return Ok(Proxy::owned(ret));
+        Ok(value.take_first())
     }
 
     fn last<'a>(value: Proxy<'a>) -> Result<Proxy<'a>, JqlError> {
-        let ret = match value.data() {
-            JsonValue::Array(items) => match items.last() {
-                Some(x) => x.clone(),
-                _ => JsonValue::null(),
-            },
-            _ => JsonValue::null(),
-        };
-
-        return Ok(Proxy::owned(ret));
+        Ok(value.take_last())
     }
+}
+
+fn filter_items<'a>(
+    data: &JsonValue<'a>,
+    predictive: &JqlAstNode<'_>,
+) -> Result<Proxy<'a>, JqlError> {
+    match data {
+        JsonValue::Array(items) => {
+            let mut filtered = Vec::new();
+            for x in items {
+                let item = Proxy::owned(x.clone()).share();
+                let keep = matches!(
+                    Engine::execute(item.clone(), predictive)?.data(),
+                    JsonValue::True
+                );
+                if keep {
+                    filtered.push(item.into_value());
+                }
+            }
+            Ok(Proxy::owned(JsonValue::array(filtered)))
+        }
+        other => Err(type_mismatch_array(other)),
+    }
+}
+
+fn map_items<'a>(data: &JsonValue<'a>, transform: &JqlAstNode<'_>) -> Result<Proxy<'a>, JqlError> {
+    match data {
+        JsonValue::Array(items) => {
+            let mut mapped = Vec::with_capacity(items.len());
+            for x in items {
+                let p = Engine::execute(Proxy::owned(x.clone()), transform)?;
+                mapped.push(p.into_value());
+            }
+            Ok(Proxy::owned(JsonValue::array(mapped)))
+        }
+        other => Err(type_mismatch_array(other)),
+    }
+}
+
+fn type_mismatch_array(other: &JsonValue<'_>) -> JqlError {
+    JqlError::without_span(JqlErrorKind::TypeMismatch {
+        expected: "array",
+        found: json_value_type_name(other),
+    })
 }
 
 fn json_exec_error(err: JsonError) -> JqlError {

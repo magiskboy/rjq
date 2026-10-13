@@ -1,4 +1,4 @@
-use std::{borrow::Cow, str::FromStr};
+use std::{borrow::Cow, rc::Rc, str::FromStr};
 
 use crate::Structured;
 use crate::jql::error::{JqlError, JqlErrorKind};
@@ -6,34 +6,124 @@ use crate::jql::reference::{Access, ArrayIndex};
 use crate::jql::reference::{PropertySelection, Reference};
 use crate::json::value::JsonValue;
 
+/// Engine-side value carrier with lazy materialization.
+///
+/// - [`ValueRef::Borrowed`]: zero-copy view into the input document.
+/// - [`ValueRef::Shared`]: `Rc`-backed owned tree; fan-out (`clone`) is O(1).
+/// - [`ValueRef::Owned`]: uniquely owned tree; consume via [`Proxy::into_value`].
 #[derive(Debug, Clone)]
 pub struct Proxy<'a> {
-    data: Cow<'a, JsonValue<'a>>,
+    pub(crate) data: ValueRef<'a>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ValueRef<'a> {
+    Borrowed(&'a JsonValue<'a>),
+    Shared(Rc<JsonValue<'a>>),
+    Owned(JsonValue<'a>),
 }
 
 impl<'a> Proxy<'a> {
     pub fn new(data: &'a JsonValue<'a>) -> Self {
         Self {
-            data: Cow::Borrowed(data),
+            data: ValueRef::Borrowed(data),
+        }
+    }
+
+    pub fn owned(data: JsonValue<'a>) -> Self {
+        Self {
+            data: ValueRef::Owned(data),
         }
     }
 
     pub fn len(&self) -> Result<JsonValue<'a>, JqlError> {
-        self.data
-            .as_ref()
+        self.data()
             .len()
             .map(|l| JsonValue::number(l as f64))
             .map_err(JqlError::from)
     }
 
-    pub fn owned(data: JsonValue<'a>) -> Self {
-        Self {
-            data: Cow::Owned(data),
+    pub fn data(&self) -> &JsonValue<'a> {
+        match &self.data {
+            ValueRef::Borrowed(v) => v,
+            ValueRef::Shared(v) => v.as_ref(),
+            ValueRef::Owned(v) => v,
         }
     }
 
-    pub fn data(&self) -> &JsonValue<'a> {
-        self.data.as_ref()
+    /// Consume the proxy into an owned [`JsonValue`], cloning only when the
+    /// value is borrowed or still shared with other proxies.
+    pub fn into_value(self) -> JsonValue<'a> {
+        match self.data {
+            ValueRef::Borrowed(v) => v.clone(),
+            ValueRef::Shared(v) => Rc::try_unwrap(v).unwrap_or_else(|rc| (*rc).clone()),
+            ValueRef::Owned(v) => v,
+        }
+    }
+
+    /// Promote a uniquely owned value to shared so subsequent `clone`s are cheap.
+    /// Borrowed / already-shared proxies are returned unchanged.
+    pub fn share(self) -> Self {
+        match self.data {
+            ValueRef::Owned(v) => Self {
+                data: ValueRef::Shared(Rc::new(v)),
+            },
+            other => Self { data: other },
+        }
+    }
+
+    /// Zero-copy element access when borrowed; move out when uniquely owned;
+    /// clone when shared.
+    pub fn take_first(self) -> Proxy<'a> {
+        match self.data {
+            ValueRef::Borrowed(v) => match v {
+                JsonValue::Array(items) => items
+                    .first()
+                    .map(Proxy::new)
+                    .unwrap_or_else(|| Proxy::owned(JsonValue::null())),
+                _ => Proxy::owned(JsonValue::null()),
+            },
+            ValueRef::Shared(rc) => match rc.as_ref() {
+                JsonValue::Array(items) => items
+                    .first()
+                    .map(|x| Proxy::owned(x.clone()))
+                    .unwrap_or_else(|| Proxy::owned(JsonValue::null())),
+                _ => Proxy::owned(JsonValue::null()),
+            },
+            ValueRef::Owned(v) => match v {
+                JsonValue::Array(items) => {
+                    Proxy::owned(items.into_iter().next().unwrap_or(JsonValue::null()))
+                }
+                _ => Proxy::owned(JsonValue::null()),
+            },
+        }
+    }
+
+    /// Zero-copy element access when borrowed; move out when uniquely owned;
+    /// clone when shared.
+    pub fn take_last(self) -> Proxy<'a> {
+        match self.data {
+            ValueRef::Borrowed(v) => match v {
+                JsonValue::Array(items) => items
+                    .last()
+                    .map(Proxy::new)
+                    .unwrap_or_else(|| Proxy::owned(JsonValue::null())),
+                _ => Proxy::owned(JsonValue::null()),
+            },
+            ValueRef::Shared(rc) => match rc.as_ref() {
+                JsonValue::Array(items) => items
+                    .last()
+                    .map(|x| Proxy::owned(x.clone()))
+                    .unwrap_or_else(|| Proxy::owned(JsonValue::null())),
+                _ => Proxy::owned(JsonValue::null()),
+            },
+            ValueRef::Owned(v) => match v {
+                JsonValue::Array(mut items) => {
+                    Proxy::owned(items.pop().unwrap_or(JsonValue::null()))
+                }
+                _ => Proxy::owned(JsonValue::null()),
+            },
+        }
     }
 
     fn type_mismatch(expected: &'static str, found: &JsonValue<'_>) -> JqlError {
@@ -107,51 +197,62 @@ impl<'a> Proxy<'a> {
         }
     }
 
-    fn descend(current: Cow<'a, JsonValue<'a>>, key: &str) -> Result<Cow<'a, JsonValue<'a>>, JqlError> {
-        match current {
-            Cow::Borrowed(v) => Ok(Cow::Borrowed(v.get(key).map_err(JqlError::from)?)),
-            Cow::Owned(v) => Ok(Cow::Owned(v.get(key).map_err(JqlError::from)?.clone())),
-        }
+    fn descend_borrowed(
+        current: &'a JsonValue<'a>,
+        key: &str,
+    ) -> Result<&'a JsonValue<'a>, JqlError> {
+        current.get(key).map_err(JqlError::from)
     }
 
-    fn apply_selection(
-        current: Cow<'a, JsonValue<'a>>,
-        properties: PropertySelection,
-    ) -> Result<Cow<'a, JsonValue<'a>>, JqlError> {
-        match properties {
-            PropertySelection::All => Ok(current),
-            PropertySelection::Properties(keys) => {
-                Ok(Cow::Owned(Self::select_keys(current.as_ref(), &keys)?))
-            }
-        }
+    fn descend_ref<'b>(current: &'b JsonValue<'a>, key: &str) -> Result<&'b JsonValue<'a>, JqlError> {
+        current.get(key).map_err(JqlError::from)
     }
 
-    pub fn get(&self, ref_str: &str) -> Result<Proxy<'a>, JqlError> {
-        let jref = Reference::from_str(ref_str)?;
-        // Re-borrow root with lifetime `'a` when possible; only clone if already owned.
-        let mut current = match &self.data {
-            Cow::Borrowed(v) => Cow::Borrowed(*v),
-            Cow::Owned(v) => Cow::Owned(v.clone()),
-        };
+    /// Walk a borrowed document root — results stay [`ValueRef::Borrowed`] when possible.
+    fn get_borrowed(
+        root: &'a JsonValue<'a>,
+        access: Vec<Access>,
+    ) -> Result<Proxy<'a>, JqlError> {
+        let mut current = Cow::Borrowed(root);
 
-        for access in jref.access {
-            current = match access {
+        for step in access {
+            current = match step {
                 Access::PropertyAccess {
                     property,
                     properties,
                 } => {
-                    // Empty name is the root ref: operate on the current value as-is.
                     let next = if property.is_empty() {
                         current
                     } else {
-                        Self::descend(current, &property)?
+                        match current {
+                            Cow::Borrowed(v) => {
+                                Cow::Borrowed(Self::descend_borrowed(v, &property)?)
+                            }
+                            Cow::Owned(v) => {
+                                Cow::Owned(v.get(&property).map_err(JqlError::from)?.clone())
+                            }
+                        }
                     };
-                    Self::apply_selection(next, properties)?
+                    match properties {
+                        PropertySelection::All => next,
+                        PropertySelection::Properties(keys) => {
+                            Cow::Owned(Self::select_keys(next.as_ref(), &keys)?)
+                        }
+                    }
                 }
                 Access::IndexAccess { index, properties } => {
                     let next = match index {
                         ArrayIndex::All => current,
-                        ArrayIndex::Index(index) => Self::descend(current, &index.to_string())?,
+                        ArrayIndex::Index(index) => match current {
+                            Cow::Borrowed(v) => {
+                                Cow::Borrowed(Self::descend_borrowed(v, &index.to_string())?)
+                            }
+                            Cow::Owned(v) => Cow::Owned(
+                                v.get(&index.to_string())
+                                    .map_err(JqlError::from)?
+                                    .clone(),
+                            ),
+                        },
                         ArrayIndex::Range { start, end } => {
                             Cow::Owned(Self::slice(current.as_ref(), start, end)?)
                         }
@@ -159,15 +260,135 @@ impl<'a> Proxy<'a> {
                             Cow::Owned(Self::select(current.as_ref(), indices)?)
                         }
                     };
-                    Self::apply_selection(next, properties)?
+                    match properties {
+                        PropertySelection::All => next,
+                        PropertySelection::Properties(keys) => {
+                            Cow::Owned(Self::select_keys(next.as_ref(), &keys)?)
+                        }
+                    }
                 }
             };
         }
 
-        Ok(Proxy { data: current })
+        Ok(Proxy {
+            data: match current {
+                Cow::Borrowed(v) => ValueRef::Borrowed(v),
+                Cow::Owned(v) => ValueRef::Owned(v),
+            },
+        })
+    }
+
+    /// Walk an owned/shared tree by reference and clone only the final node
+    /// (or projection), instead of cloning the root before every descend step.
+    fn get_owned_view(
+        root: &JsonValue<'a>,
+        access: Vec<Access>,
+    ) -> Result<Proxy<'a>, JqlError> {
+        enum Cursor<'b, 'a> {
+            Ref(&'b JsonValue<'a>),
+            Owned(JsonValue<'a>),
+        }
+
+        let mut current = Cursor::Ref(root);
+
+        for step in access {
+            current = match step {
+                Access::PropertyAccess {
+                    property,
+                    properties,
+                } => {
+                    let next = if property.is_empty() {
+                        current
+                    } else {
+                        match current {
+                            Cursor::Ref(v) => Cursor::Ref(Self::descend_ref(v, &property)?),
+                            Cursor::Owned(v) => {
+                                Cursor::Owned(v.get(&property).map_err(JqlError::from)?.clone())
+                            }
+                        }
+                    };
+                    match properties {
+                        PropertySelection::All => next,
+                        PropertySelection::Properties(keys) => {
+                            let view = match &next {
+                                Cursor::Ref(v) => *v,
+                                Cursor::Owned(v) => v,
+                            };
+                            Cursor::Owned(Self::select_keys(view, &keys)?)
+                        }
+                    }
+                }
+                Access::IndexAccess { index, properties } => {
+                    let next = match index {
+                        ArrayIndex::All => current,
+                        ArrayIndex::Index(index) => match current {
+                            Cursor::Ref(v) => {
+                                Cursor::Ref(Self::descend_ref(v, &index.to_string())?)
+                            }
+                            Cursor::Owned(v) => Cursor::Owned(
+                                v.get(&index.to_string())
+                                    .map_err(JqlError::from)?
+                                    .clone(),
+                            ),
+                        },
+                        ArrayIndex::Range { start, end } => {
+                            let view = match &current {
+                                Cursor::Ref(v) => *v,
+                                Cursor::Owned(v) => v,
+                            };
+                            Cursor::Owned(Self::slice(view, start, end)?)
+                        }
+                        ArrayIndex::MultipleIndex(indices) => {
+                            let view = match &current {
+                                Cursor::Ref(v) => *v,
+                                Cursor::Owned(v) => v,
+                            };
+                            Cursor::Owned(Self::select(view, indices)?)
+                        }
+                    };
+                    match properties {
+                        PropertySelection::All => next,
+                        PropertySelection::Properties(keys) => {
+                            let view = match &next {
+                                Cursor::Ref(v) => *v,
+                                Cursor::Owned(v) => v,
+                            };
+                            Cursor::Owned(Self::select_keys(view, &keys)?)
+                        }
+                    }
+                }
+            };
+        }
+
+        Ok(match current {
+            Cursor::Ref(v) => Proxy::owned(v.clone()),
+            Cursor::Owned(v) => Proxy::owned(v),
+        })
+    }
+
+    pub fn get(&self, ref_str: &str) -> Result<Proxy<'a>, JqlError> {
+        let jref = Reference::from_str(ref_str)?;
+        // Identity (".") / no-op selection: reuse this proxy (O(1) for Borrowed/Shared).
+        if is_identity_access(&jref.access) {
+            return Ok(self.clone());
+        }
+        match &self.data {
+            ValueRef::Borrowed(v) => Self::get_borrowed(v, jref.access),
+            ValueRef::Shared(v) => Self::get_owned_view(v.as_ref(), jref.access),
+            ValueRef::Owned(v) => Self::get_owned_view(v, jref.access),
+        }
     }
 }
 
+fn is_identity_access(access: &[Access]) -> bool {
+    matches!(
+        access,
+        [Access::PropertyAccess {
+            property,
+            properties: PropertySelection::All,
+        }] if property.is_empty()
+    )
+}
 
 #[cfg(test)]
 #[path = "../../tests/jql/proxy.rs"]

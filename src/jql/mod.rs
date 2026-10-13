@@ -24,7 +24,7 @@ pub fn jql_execute<'a>(value: &'a JsonValue<'a>, query: &str) -> Result<JsonValu
     let proxy = Proxy::new(value);
     let ast = jql_parse(query)?;
     let result = Engine::execute(proxy, &ast)?;
-    Ok(result.data().clone())
+    Ok(result.into_value())
 }
 
 #[cfg(test)]

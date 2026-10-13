@@ -14,10 +14,6 @@ name = "rjq"
 path = "src/bin/jq/main.rs"
 required-features = ["cli"]
 
-[[bin]]
-name = "bench-jql"
-path = "benchmark/rust/jql_query.rs"
-
 [features]
 default = []
 cli = ["dep:structopt"]

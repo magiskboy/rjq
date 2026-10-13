@@ -7,7 +7,7 @@ use crate::json::value::JsonValue;
 
 fn execute(data: &JsonValue<'_>, query: &str) -> Result<JsonValue<'static>, JqlError> {
     let ast = jql_parse(query)?;
-    Engine::execute(Proxy::new(data), &ast).map(|p| p.data().clone().into_owned())
+    Engine::execute(Proxy::new(data), &ast).map(|p| p.into_value().into_owned())
 }
 
 fn assert_ok(data: &JsonValue<'_>, query: &str, expected: JsonValue<'static>) {

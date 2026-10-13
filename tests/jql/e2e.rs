@@ -68,8 +68,7 @@ fn end_to_end_parse_then_execute_matches_direct_execute() {
     let via_ast =
         crate::jql::engine::Engine::execute(crate::jql::proxy::Proxy::new(&data), &ast)
             .unwrap()
-            .data()
-            .clone();
+            .into_value();
     assert_eq!(via_ast, jql_execute(&data, query).unwrap());
     assert_eq!(via_ast, JsonValue::string("Dave".to_string()));
 }
