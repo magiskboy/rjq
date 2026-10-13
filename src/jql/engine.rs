@@ -63,6 +63,8 @@ impl Engine {
             "map" => Self::map(value, &args[0]),
             "len" => Self::len(value, &args[0]),
             "sum" => Self::sum(value, &args[0]),
+            "first" => Self::first(value),
+            "last" => Self::last(value),
             other => Err(op_not_support(other)),
         }
     }
@@ -191,6 +193,30 @@ impl Engine {
         }
         Ok(Proxy::owned(JsonValue::object(entries)))
     }
+
+    fn first<'a>(value: Proxy<'a>) -> Result<Proxy<'a>, JqlError> {
+        let ret = match value.data() {
+            JsonValue::Array(items) => match items.first() {
+                Some(x) => x.clone(),
+                _ => JsonValue::null(),
+            },
+            _ => JsonValue::null(),
+        };
+
+        return Ok(Proxy::owned(ret));
+    }
+
+    fn last<'a>(value: Proxy<'a>) -> Result<Proxy<'a>, JqlError> {
+        let ret = match value.data() {
+            JsonValue::Array(items) => match items.last() {
+                Some(x) => x.clone(),
+                _ => JsonValue::null(),
+            },
+            _ => JsonValue::null(),
+        };
+
+        return Ok(Proxy::owned(ret));
+    }
 }
 
 fn json_exec_error(err: JsonError) -> JqlError {
@@ -198,9 +224,7 @@ fn json_exec_error(err: JsonError) -> JqlError {
 }
 
 fn op_not_support(op: &str) -> JqlError {
-    JqlError::without_span(JqlErrorKind::UnsupportedOperation {
-        op: op.to_string(),
-    })
+    JqlError::without_span(JqlErrorKind::UnsupportedOperation { op: op.to_string() })
 }
 
 fn json_value_type_name(value: &JsonValue<'_>) -> &'static str {
@@ -213,7 +237,6 @@ fn json_value_type_name(value: &JsonValue<'_>) -> &'static str {
         JsonValue::Object(_) => "object",
     }
 }
-
 
 #[cfg(test)]
 #[path = "../../tests/jql/engine.rs"]

@@ -1,18 +1,18 @@
+use crate::Span;
 use crate::jql::{
     ast::{JqlAstNode, JqlBinaryKind, ObjectField, ObjectKey},
     error::{JqlError, JqlErrorKind},
     parser::JqlParser,
     token::{JqlToken, JqlTokenKind},
 };
-use crate::Span;
 
 fn tokens(source: &str, parts: &[(JqlTokenKind, &str)]) -> Vec<JqlToken> {
     let mut cursor = 0;
     let mut out = Vec::with_capacity(parts.len());
     for &(kind, lexeme) in parts {
-        let rel = source[cursor..].find(lexeme).unwrap_or_else(|| {
-            panic!("lexeme {lexeme:?} not found in {source:?} from {cursor}")
-        });
+        let rel = source[cursor..]
+            .find(lexeme)
+            .unwrap_or_else(|| panic!("lexeme {lexeme:?} not found in {source:?} from {cursor}"));
         let start = cursor + rel;
         let end = start + lexeme.len();
         out.push(JqlToken::new(kind, start, end));
@@ -21,10 +21,7 @@ fn tokens(source: &str, parts: &[(JqlTokenKind, &str)]) -> Vec<JqlToken> {
     out
 }
 
-fn parse<'a>(
-    source: &'a str,
-    parts: &[(JqlTokenKind, &str)],
-) -> Result<JqlAstNode<'a>, JqlError> {
+fn parse<'a>(source: &'a str, parts: &[(JqlTokenKind, &str)]) -> Result<JqlAstNode<'a>, JqlError> {
     JqlParser::parse(&tokens(source, parts), source)
 }
 
@@ -40,11 +37,7 @@ fn string(text: &str) -> JqlAstNode<'_> {
     JqlAstNode::String(text)
 }
 
-fn binary<'a>(
-    kind: JqlBinaryKind,
-    left: JqlAstNode<'a>,
-    right: JqlAstNode<'a>,
-) -> JqlAstNode<'a> {
+fn binary<'a>(kind: JqlBinaryKind, left: JqlAstNode<'a>, right: JqlAstNode<'a>) -> JqlAstNode<'a> {
     JqlAstNode::Binary {
         kind,
         left: Box::new(left),
@@ -112,7 +105,7 @@ fn literals() {
     );
     assert_eq!(
         parse("foo", &[(JqlTokenKind::Identifier, "foo")]),
-        Ok(access("foo"))
+        Ok(call("foo", vec![]))
     );
 }
 
@@ -641,12 +634,15 @@ fn map_call_with_object_construct() {
 
 #[test]
 fn unclosed_brace_reports_span_on_open() {
-    let err = parse("{ name: .title", &[
-        (JqlTokenKind::LBrace, "{"),
-        (JqlTokenKind::Identifier, "name"),
-        (JqlTokenKind::Colon, ":"),
-        (JqlTokenKind::Identifier, ".title"),
-    ])
+    let err = parse(
+        "{ name: .title",
+        &[
+            (JqlTokenKind::LBrace, "{"),
+            (JqlTokenKind::Identifier, "name"),
+            (JqlTokenKind::Colon, ":"),
+            (JqlTokenKind::Identifier, ".title"),
+        ],
+    )
     .unwrap_err();
     assert_eq!(err.kind, JqlErrorKind::UnclosedBrace);
     assert_eq!(err.span, Some(Span { start: 0, end: 1 }));
