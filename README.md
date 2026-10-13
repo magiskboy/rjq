@@ -1,4 +1,4 @@
-# rs-jq
+# rjq
 
 Learning project: JSON parser + jq-like query language, written in Rust.
 
