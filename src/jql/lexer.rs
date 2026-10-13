@@ -1,9 +1,9 @@
 use crate::{
+    Source, Span,
     jql::{
         error::{JqlError, JqlErrorKind},
         token::{JqlToken, JqlTokenKind},
     },
-    Source, Span,
 };
 
 #[derive(Debug, Clone)]
@@ -62,6 +62,11 @@ enum JqlLexerState {
     StartAnd,
     InAnd,
     InOr,
+    InPlus,
+    InSubtract,
+    InMultiply,
+    InDivide,
+    InMod,
 
     Whitespace,
     InvalidToken,
@@ -110,6 +115,11 @@ impl<'a> JqlLexer<'a> {
                 '=' => JqlLexerState::StartEqual,
                 '>' => JqlLexerState::InGreater,
                 '<' => JqlLexerState::InLess,
+                '+' => JqlLexerState::InPlus,
+                '-' => JqlLexerState::InSubtract,
+                '*' => JqlLexerState::InMultiply,
+                '/' => JqlLexerState::InDivide,
+                '%' => JqlLexerState::InMod,
                 '|' => JqlLexerState::InPipe,
                 '(' => JqlLexerState::InLBrace,
                 ')' => JqlLexerState::InRBrace,
@@ -246,6 +256,11 @@ impl<'a> JqlLexer<'a> {
             JqlLexerState::InLessEqual => JqlTokenKind::LessEqualOp,
             JqlLexerState::InAnd => JqlTokenKind::AndLogicalOp,
             JqlLexerState::InOr => JqlTokenKind::OrLogicalOp,
+            JqlLexerState::InPlus => JqlTokenKind::Plus,
+            JqlLexerState::InSubtract => JqlTokenKind::Subtract,
+            JqlLexerState::InMultiply => JqlTokenKind::Multiply,
+            JqlLexerState::InDivide => JqlTokenKind::Divide,
+            JqlLexerState::InMod => JqlTokenKind::Mod,
             JqlLexerState::Whitespace => JqlTokenKind::Whitespace,
             _ => JqlTokenKind::InvalidToken,
         };

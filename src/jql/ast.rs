@@ -34,6 +34,31 @@ impl JqlBinaryKind {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, PartialOrd)]
+pub enum JqlNumericKind {
+    Plus,
+    Subtract,
+    Multiply,
+    Divide,
+    Mod,
+}
+
+impl JqlNumericKind {
+    pub fn from_token_kind(kind: &JqlTokenKind) -> Result<Self, JqlError> {
+        match kind {
+            JqlTokenKind::Plus => Ok(Self::Plus),
+            JqlTokenKind::Subtract => Ok(Self::Subtract),
+            JqlTokenKind::Multiply => Ok(Self::Multiply),
+            JqlTokenKind::Divide => Ok(Self::Divide),
+            JqlTokenKind::Mod => Ok(Self::Mod),
+            _ => Err(JqlError::without_span(JqlErrorKind::UnexpectedToken {
+                expected: ExpectedSyntax::BinaryOperator,
+                found: *kind,
+            })),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjectKey<'a> {
     Ident(&'a str),
@@ -66,6 +91,11 @@ pub enum JqlAstNode<'a> {
         left: Box<JqlAstNode<'a>>,
         right: Box<JqlAstNode<'a>>,
     },
+    Numeric {
+        kind: JqlNumericKind,
+        left: Box<JqlAstNode<'a>>,
+        right: Box<JqlAstNode<'a>>,
+    },
     Object {
         fields: Vec<ObjectField<'a>>,
     },
@@ -78,6 +108,18 @@ pub enum JqlAstNode<'a> {
 }
 
 impl<'a> JqlAstNode<'a> {
+    pub fn numeric(
+        kind: JqlNumericKind,
+        left: JqlAstNode<'a>,
+        right: JqlAstNode<'a>,
+    ) -> Result<JqlAstNode<'a>, JqlError> {
+        Ok(JqlAstNode::Numeric {
+            kind,
+            left: Box::new(left),
+            right: Box::new(right),
+        })
+    }
+
     pub fn binary(
         kind: JqlBinaryKind,
         left: JqlAstNode<'a>,

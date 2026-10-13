@@ -275,8 +275,73 @@ fn json_number_forms() {
         assert_eq!(lexemes(source, &tokens), expected, "number {source:?}");
     }
 
-    for source in ["-0", "-1", "-10", "1e+2", "1e-2", "1.2E+3", "-1.2e-3"] {
-        assert_invalid(source);
+    // Leading minus / signed exponents are arithmetic ops, not JSON number literals.
+    let signed = [
+        (
+            "-0",
+            vec![JqlTokenKind::Subtract, JqlTokenKind::Number],
+            vec!["-", "0"],
+        ),
+        (
+            "-1",
+            vec![JqlTokenKind::Subtract, JqlTokenKind::Number],
+            vec!["-", "1"],
+        ),
+        (
+            "-10",
+            vec![JqlTokenKind::Subtract, JqlTokenKind::Number],
+            vec!["-", "10"],
+        ),
+        (
+            "1e+2",
+            vec![
+                JqlTokenKind::Number,
+                JqlTokenKind::Identifier,
+                JqlTokenKind::Plus,
+                JqlTokenKind::Number,
+            ],
+            vec!["1", "e", "+", "2"],
+        ),
+        (
+            "1e-2",
+            vec![
+                JqlTokenKind::Number,
+                JqlTokenKind::Identifier,
+                JqlTokenKind::Subtract,
+                JqlTokenKind::Number,
+            ],
+            vec!["1", "e", "-", "2"],
+        ),
+        (
+            "1.2E+3",
+            vec![
+                JqlTokenKind::Number,
+                JqlTokenKind::Identifier,
+                JqlTokenKind::Plus,
+                JqlTokenKind::Number,
+            ],
+            vec!["1", ".2E", "+", "3"],
+        ),
+        (
+            "-1.2e-3",
+            vec![
+                JqlTokenKind::Subtract,
+                JqlTokenKind::Number,
+                JqlTokenKind::Identifier,
+                JqlTokenKind::Subtract,
+                JqlTokenKind::Number,
+            ],
+            vec!["-", "1", ".2e", "-", "3"],
+        ),
+    ];
+    for (source, expected_kinds, expected_lexemes) in signed {
+        let tokens = run(source).expect(source);
+        assert_eq!(kinds(&tokens), expected_kinds, "number {source:?}");
+        assert_eq!(
+            lexemes(source, &tokens),
+            expected_lexemes,
+            "number {source:?}"
+        );
     }
 }
 
@@ -434,8 +499,43 @@ fn access_paths_still_absorb_braces_colon_and_comma() {
 }
 
 #[test]
+fn arithmetic_operators() {
+    let cases = [
+        ("+", JqlTokenKind::Plus),
+        ("-", JqlTokenKind::Subtract),
+        ("*", JqlTokenKind::Multiply),
+        ("/", JqlTokenKind::Divide),
+        ("%", JqlTokenKind::Mod),
+    ];
+    for (source, kind) in cases {
+        assert_eq!(
+            run(source),
+            Ok(vec![tok(kind, 0, source.len())]),
+            "operator {source:?}"
+        );
+    }
+
+    assert_eq!(
+        run("1 + 2 - 3 * 4 / 5 % 6"),
+        Ok(vec![
+            tok(JqlTokenKind::Number, 0, 1),
+            tok(JqlTokenKind::Plus, 2, 3),
+            tok(JqlTokenKind::Number, 4, 5),
+            tok(JqlTokenKind::Subtract, 6, 7),
+            tok(JqlTokenKind::Number, 8, 9),
+            tok(JqlTokenKind::Multiply, 10, 11),
+            tok(JqlTokenKind::Number, 12, 13),
+            tok(JqlTokenKind::Divide, 14, 15),
+            tok(JqlTokenKind::Number, 16, 17),
+            tok(JqlTokenKind::Mod, 18, 19),
+            tok(JqlTokenKind::Number, 20, 21),
+        ])
+    );
+}
+
+#[test]
 fn unknown_characters_are_errors() {
-    for source in ["@", "#", "[", "]", "+", "-", "'", "é", "-1", "[0]"] {
+    for source in ["@", "#", "[", "]", "'", "é", "[0]"] {
         assert_invalid(source);
     }
 }
@@ -499,8 +599,5 @@ fn readme_pipeline() {
     assert_eq!(tokens[0].span, Span { start: 0, end: 4 });
     assert_eq!(tokens[1].span, Span { start: 5, end: 6 });
     assert_eq!(tokens[6].span, Span { start: 20, end: 22 });
-    assert_eq!(
-        tokens.last().unwrap().span,
-        Span { start: 66, end: 67 }
-    );
+    assert_eq!(tokens.last().unwrap().span, Span { start: 66, end: 67 });
 }

@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use crate::Span;
+use crate::jql::ast::JqlNumericKind;
 use crate::jql::{
     ast::{JqlAstNode, JqlBinaryKind, ObjectField},
     error::{ExpectedSyntax, JqlError, JqlErrorKind},
@@ -35,7 +36,24 @@ impl JqlParser {
     ) -> Result<JqlAstNode<'a>, JqlError> {
         match op {
             JqlTokenKind::Pipe => JqlAstNode::pipe(left, right),
-            _ => JqlAstNode::binary(JqlBinaryKind::from_token_kind(&op)?, left, right),
+            JqlTokenKind::Plus
+            | JqlTokenKind::Subtract
+            | JqlTokenKind::Multiply
+            | JqlTokenKind::Divide
+            | JqlTokenKind::Mod => {
+                JqlAstNode::numeric(JqlNumericKind::from_token_kind(&op)?, left, right)
+            }
+            JqlTokenKind::LessOp
+            | JqlTokenKind::GreaterOp
+            | JqlTokenKind::LessEqualOp
+            | JqlTokenKind::GreaterEqualOp
+            | JqlTokenKind::EqualOp
+            | JqlTokenKind::NotEqualOp
+            | JqlTokenKind::AndLogicalOp
+            | JqlTokenKind::OrLogicalOp => {
+                JqlAstNode::binary(JqlBinaryKind::from_token_kind(&op)?, left, right)
+            }
+            _ => unreachable!(),
         }
     }
 
@@ -260,6 +278,11 @@ impl JqlParser {
                 }
 
                 JqlTokenKind::Pipe
+                | JqlTokenKind::Plus
+                | JqlTokenKind::Subtract
+                | JqlTokenKind::Multiply
+                | JqlTokenKind::Divide
+                | JqlTokenKind::Mod
                 | JqlTokenKind::LessOp
                 | JqlTokenKind::LessEqualOp
                 | JqlTokenKind::GreaterOp

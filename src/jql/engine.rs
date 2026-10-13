@@ -2,13 +2,13 @@ use std::cmp::Ordering;
 
 use crate::{
     jql::{
-        ast::{JqlAstNode, JqlBinaryKind, ObjectField, ObjectKey},
+        ast::{JqlAstNode, JqlBinaryKind, JqlNumericKind, ObjectField, ObjectKey},
         error::{JqlError, JqlErrorKind},
         proxy::{Proxy, ValueRef},
     },
     json::{
         error::JsonError,
-        value::{JsonLogic, JsonOrd, JsonValue},
+        value::{JsonLogic, JsonNumeric, JsonOrd, JsonValue},
     },
 };
 
@@ -25,6 +25,7 @@ impl Engine {
             JqlAstNode::Access(path) => Self::access(value, path),
             JqlAstNode::Pipe { source, dest } => Self::pipe(value, source, dest),
             JqlAstNode::Call { name, args } => Self::call(name, args, value),
+            JqlAstNode::Numeric { kind, left, right } => Self::numeric(kind, left, right, value),
             JqlAstNode::Binary { kind, left, right } => Self::binary(kind, left, right, value),
             JqlAstNode::Object { fields } => Self::object(value, fields),
             _ => Err(op_not_support("ast node")),
@@ -105,6 +106,47 @@ impl Engine {
                 found: json_value_type_name(other),
             })),
         }
+    }
+
+    pub fn numeric<'a>(
+        kind: &JqlNumericKind,
+        left: &JqlAstNode<'_>,
+        right: &JqlAstNode<'_>,
+        value: Proxy<'a>,
+    ) -> Result<Proxy<'a>, JqlError> {
+        let value = value.share();
+        let left_proxy = Engine::execute(value.clone(), left)?;
+        let right_proxy = Engine::execute(value, right)?;
+        let left_output = left_proxy.data();
+        let right_output = right_proxy.data();
+        let result = match kind {
+            JqlNumericKind::Plus => {
+                let left_f64 = left_output.try_as_float()?;
+                let right_f64 = right_output.try_as_float()?;
+                left_f64 + right_f64
+            }
+            JqlNumericKind::Subtract => {
+                let left_f64 = left_output.try_as_float()?;
+                let right_f64 = right_output.try_as_float()?;
+                left_f64 - right_f64
+            }
+            JqlNumericKind::Multiply => {
+                let left_f64 = left_output.try_as_float()?;
+                let right_f64 = right_output.try_as_float()?;
+                left_f64 * right_f64
+            }
+            JqlNumericKind::Divide => {
+                let left_f64 = left_output.try_as_float()?;
+                let right_f64 = right_output.try_as_float()?;
+                left_f64 / right_f64
+            }
+            JqlNumericKind::Mod => {
+                let left_i32 = left_output.try_as_int()?;
+                let right_i32 = right_output.try_as_int()?;
+                (left_i32 % right_i32) as f64
+            }
+        };
+        Ok(Proxy::owned(JsonValue::number(result)))
     }
 
     pub fn binary<'a>(
