@@ -34,69 +34,60 @@ CLI:
 cargo build --release --features cli --bin rjq
 ```
 
-## Notable JQL queries
-
-Queries below run against the fixture `src/jql/sample.json`.
-
-**Access**
+## JQL syntax
 
 ```text
-.                              # whole document
-.count                         # 42
-.jobs[1]                       # second job
-.jobs[0,2]                     # pick indices
+.                              # identity
+.count                         # property
+.jobs[1]                       # index
+.jobs[0,2]                     # multi-index
 .jobs[1:3]                     # slice [start:end)
-.jobs[]                        # all items (identity on array)
-.person{name,age}              # project object keys
-.jobs[]{title,description}     # project keys on each item
-."kebab-case" / .["x-y"]       # keys with -, space, unicode
-._id / .person{_id,0,"a-b"}    # underscore / digit / quoted projection keys
-.company.teams[0].name         # "platform"
-.matrix[0][1]                  # nested index → 2
-.nested[1][1][0]               # deep nest → 3
+.jobs[]                        # all elements
+.person{name,age}              # project keys
+."kebab-case" / .["x-y"]       # quoted / bracket key
+._id / .person{_id,0,"a-b"}    # underscore / digit / quoted projection
+.company.teams[0].name         # chain
+.matrix[0] | .[1]              # pipe
+.count > 40                    # comparison
+.a && .b || .c                 # logical
+1 + 2 * 3                      # arithmetic
+{ name: .title, pay: .money }  # object construct
 ```
 
-**Pipe**
+## JQL functions
 
-```text
-.matrix[0] | .[1]                              # 2
-.company | .teams[1] | .name                   # "data"
-.jobs | .[0].title                             # "Dev"
-.matrix[1] | .[0,2]                            # [4, 6]
-.count | . > 40                                # true
-.jobs[0].title | . == "Dev"                    # true
-```
+Nullary functions act on the current value (e.g. `.jobs | len`). One-arg forms take a single expression.
 
-**Filter**
-
-```text
-.jobs | filter(.active == true)
-.jobs | filter(.id > 2)
-.people | filter(.vip == true && .score >= 70)
-.candidates | filter(.id > 10 && .age < 20 && (.money > 10 || .gold >= 1))
-.jobs | filter((.level == "senior" || .level == "mid") && .money >= 50)
-```
-
-**Map**
-
-```text
-.jobs | map(.title)
-.jobs | filter(.active == true) | map(.id)
-.matrix | map(.[0])
-.jobs | filter(.id > 2) | map({ name: .title, pay: .money })
-.company.teams | map({ name: .name, size: .size })
-```
-
-**Compose**
-
-```text
-.jobs[]{title,id} | filter(.id > 2) | .[0].title
-.company.teams | filter(.size > 5) | .[0].name
-.jobs[0,3] | filter(.active == true) | .[1].title
-.people | filter(.vip == true) | .[0].name
-.matrix | filter(.[0] > 3) | .[0][1]
-.jobs | filter(.active == true) | map(.title)
-```
+| Name | Args | Example |
+|------|------|---------|
+| `filter` | `pred` | `.jobs \| filter(.active == true)` |
+| `map` | `expr` | `.jobs \| map(.title)` |
+| `any` | `pred` | `.jobs \| any(.active == true)` |
+| `all` | `pred` | `.jobs \| all(.id > 0)` |
+| `find` | `pred` | `.jobs \| find(.id == 3)` |
+| `has` | `key` | `.person \| has("age")` |
+| `contains` | `value` | `.name \| contains("lic")` |
+| `join` | `sep` | `.jobs \| map(.title) \| join(",")` |
+| `split` | `sep` | `"a,b" \| split(",")` |
+| `startswith` | `prefix` | `.title \| startswith("D")` |
+| `endswith` | `suffix` | `.title \| endswith("A")` |
+| `len` | — | `.jobs \| len` |
+| `sum` | — | `.matrix[0] \| sum` |
+| `avg` | — | `.matrix[0] \| avg` |
+| `min` | — | `.matrix[0] \| min` |
+| `max` | — | `.matrix[0] \| max` |
+| `first` | — | `.jobs \| first` |
+| `last` | — | `.jobs \| last` |
+| `keys` | — | `.person \| keys` |
+| `values` | — | `.person \| values` |
+| `type` | — | `.jobs \| type` |
+| `reverse` | — | `.matrix[0] \| reverse` |
+| `flatten` | — | `.nested \| flatten` |
+| `unique` | — | `.tags \| unique` |
+| `sort` | — | `.scores \| sort` |
+| `not` | — | `.flag \| not` |
+| `abs` | — | `.delta \| abs` |
+| `empty` | — | `.jobs \| empty` |
 
 ## Colored output
 

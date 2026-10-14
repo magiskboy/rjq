@@ -619,3 +619,223 @@ fn invalid_access_path_fails() {
     assert_err(&data, ".jobs[");
     assert_err(&data, ".matrix[0][");
 }
+
+#[test]
+fn nullary_aggregates_act_on_current_value() {
+    let data = sample();
+    assert_ok(&data, ".jobs | len", JsonValue::number(4.0));
+    assert_ok(&data, ".person | len", JsonValue::number(4.0));
+    assert_ok(&data, ".name | len", JsonValue::number(5.0));
+    assert_ok(&data, ".matrix[0] | sum", JsonValue::number(6.0));
+    assert_ok(&data, ".matrix[0] | avg", JsonValue::number(2.0));
+    assert_ok(&data, ".matrix[0] | min", JsonValue::number(1.0));
+    assert_ok(&data, ".matrix[0] | max", JsonValue::number(3.0));
+    assert_ok(&data, ".empty.arr | sum", JsonValue::number(0.0));
+    assert_ok(
+        &data,
+        ".jobs | map(.money) | sum",
+        JsonValue::number(175.0),
+    );
+    // Option A: path-arg form is rejected
+    assert_exec_err(&data, "len(.jobs)");
+    assert_exec_err(&data, "sum(.matrix[0])");
+    assert_exec_err(&data, ".empty.arr | avg");
+    assert_exec_err(&data, ".empty.arr | min");
+}
+
+#[test]
+fn first_last_keys_values_type() {
+    let data = sample();
+    assert_ok(&data, ".jobs | first | .title", JsonValue::string("Dev".to_string()));
+    assert_ok(&data, ".jobs | last | .title", JsonValue::string("SRE".to_string()));
+    assert_ok(
+        &data,
+        ".person | keys",
+        JsonValue::array(vec![
+            JsonValue::string("name".to_string()),
+            JsonValue::string("age".to_string()),
+            JsonValue::string("city".to_string()),
+            JsonValue::string("role".to_string()),
+        ]),
+    );
+    assert_ok(
+        &data,
+        ".matrix[0] | keys",
+        JsonValue::array(vec![
+            JsonValue::number(0.0),
+            JsonValue::number(1.0),
+            JsonValue::number(2.0),
+        ]),
+    );
+    assert_ok(
+        &data,
+        ".company.meta | values",
+        JsonValue::array(vec![
+            JsonValue::string("APAC".to_string()),
+            JsonValue::number(1.0),
+        ]),
+    );
+    assert_ok(&data, ".jobs | type", JsonValue::string("array".to_string()));
+    assert_ok(&data, ".person | type", JsonValue::string("object".to_string()));
+    assert_ok(&data, ".count | type", JsonValue::string("number".to_string()));
+    assert_ok(&data, ".name | type", JsonValue::string("string".to_string()));
+    assert_ok(&data, ".flag | type", JsonValue::string("boolean".to_string()));
+    assert_ok(&data, ".house | type", JsonValue::string("null".to_string()));
+    assert_exec_err(&data, ".jobs | values");
+}
+
+#[test]
+fn reverse_flatten_unique_sort() {
+    let data = sample();
+    assert_ok(
+        &data,
+        ".matrix[0] | reverse",
+        JsonValue::array(vec![
+            JsonValue::number(3.0),
+            JsonValue::number(2.0),
+            JsonValue::number(1.0),
+        ]),
+    );
+    assert_ok(
+        &data,
+        ".nested | flatten",
+        JsonValue::array(vec![
+            JsonValue::number(1.0),
+            JsonValue::number(2.0),
+            JsonValue::array(vec![JsonValue::number(3.0)]),
+        ]),
+    );
+    assert_ok(
+        &data,
+        ".people[0].tags | unique",
+        JsonValue::array(vec![
+            JsonValue::string("a".to_string()),
+            JsonValue::string("b".to_string()),
+        ]),
+    );
+    // flatten then unique on duplicated tags across people
+    assert_ok(
+        &data,
+        ".people | map(.tags) | flatten | unique",
+        JsonValue::array(vec![
+            JsonValue::string("a".to_string()),
+            JsonValue::string("b".to_string()),
+            JsonValue::string("c".to_string()),
+        ]),
+    );
+    assert_ok(
+        &data,
+        ".matrix[0] | reverse | sort",
+        JsonValue::array(vec![
+            JsonValue::number(1.0),
+            JsonValue::number(2.0),
+            JsonValue::number(3.0),
+        ]),
+    );
+    assert_ok(
+        &data,
+        ".jobs | map(.title) | sort",
+        JsonValue::array(vec![
+            JsonValue::string("Dev".to_string()),
+            JsonValue::string("PM".to_string()),
+            JsonValue::string("QA".to_string()),
+            JsonValue::string("SRE".to_string()),
+        ]),
+    );
+    assert_exec_err(&data, ".mixed | sort");
+}
+
+#[test]
+fn any_all_find_has_contains() {
+    let data = sample();
+    assert_ok(&data, ".jobs | any(.active == true)", JsonValue::True);
+    assert_ok(&data, ".jobs | any(.active == false)", JsonValue::True);
+    assert_ok(&data, ".jobs | all(.id > 0)", JsonValue::True);
+    assert_ok(&data, ".jobs | all(.active == true)", JsonValue::False);
+    assert_ok(&data, ".empty.arr | any(.id > 0)", JsonValue::False);
+    assert_ok(&data, ".empty.arr | all(.id > 0)", JsonValue::True);
+    assert_ok(
+        &data,
+        ".jobs | find(.id == 3) | .title",
+        JsonValue::string("PM".to_string()),
+    );
+    assert_ok(&data, ".jobs | find(.id == 999)", JsonValue::Null);
+    assert_ok(&data, ".person | has(\"age\")", JsonValue::True);
+    assert_ok(&data, ".person | has(\"missing\")", JsonValue::False);
+    assert_ok(&data, ".people[0].tags | contains(\"a\")", JsonValue::True);
+    assert_ok(&data, ".people[0].tags | contains(\"z\")", JsonValue::False);
+    assert_ok(&data, ".name | contains(\"lic\")", JsonValue::True);
+    assert_ok(&data, ".name | contains(\"bob\")", JsonValue::False);
+    assert_exec_err(&data, ".count | has(\"x\")");
+    assert_exec_err(&data, ".count | contains(1)");
+}
+
+#[test]
+fn not_abs_empty() {
+    let data = sample();
+    assert_ok(&data, ".flag | not", JsonValue::False);
+    assert_ok(&data, ".off | not", JsonValue::True);
+    assert_ok(&data, ".scalars.negative | abs", JsonValue::number(10.0));
+    assert_ok(&data, ".count | abs", JsonValue::number(42.0));
+    assert_ok(&data, ".empty.arr | empty", JsonValue::True);
+    assert_ok(&data, ".empty.obj | empty", JsonValue::True);
+    assert_ok(&data, ".jobs | empty", JsonValue::False);
+    assert_ok(&data, ".name | empty", JsonValue::False);
+    assert_exec_err(&data, ".count | not");
+    assert_exec_err(&data, ".name | abs");
+    assert_exec_err(&data, ".count | empty");
+}
+
+#[test]
+fn join_split_startswith_endswith() {
+    let data = sample();
+    assert_ok(
+        &data,
+        ".jobs | map(.title) | join(\",\")",
+        JsonValue::string("Dev,QA,PM,SRE".to_string()),
+    );
+    assert_ok(
+        &data,
+        ".people[0].tags | join(\"-\")",
+        JsonValue::string("a-b".to_string()),
+    );
+    assert_ok(
+        &data,
+        ".label | split(\"o\")",
+        JsonValue::array(vec![
+            JsonValue::string("r".to_string()),
+            JsonValue::string("".to_string()),
+            JsonValue::string("t".to_string()),
+        ]),
+    );
+    assert_ok(
+        &data,
+        "\"a,b,c\" | split(\",\")",
+        JsonValue::array(vec![
+            JsonValue::string("a".to_string()),
+            JsonValue::string("b".to_string()),
+            JsonValue::string("c".to_string()),
+        ]),
+    );
+    assert_ok(
+        &data,
+        "\"ab\" | split(\"\")",
+        JsonValue::array(vec![
+            JsonValue::string("a".to_string()),
+            JsonValue::string("b".to_string()),
+        ]),
+    );
+    assert_ok(&data, ".jobs[0].title | startswith(\"D\")", JsonValue::True);
+    assert_ok(&data, ".jobs[0].title | startswith(\"Q\")", JsonValue::False);
+    assert_ok(&data, ".jobs[1].title | endswith(\"A\")", JsonValue::True);
+    assert_ok(&data, ".jobs[1].title | endswith(\"v\")", JsonValue::False);
+    assert_ok(
+        &data,
+        ".jobs | map(.title) | join(\",\") | split(\",\") | first | endswith(\"ev\")",
+        JsonValue::True,
+    );
+    assert_exec_err(&data, ".matrix[0] | join(\",\")");
+    assert_exec_err(&data, ".count | split(\",\")");
+    assert_exec_err(&data, ".count | startswith(\"1\")");
+    assert_exec_err(&data, ".name | endswith(1)");
+}

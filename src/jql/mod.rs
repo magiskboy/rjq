@@ -9,6 +9,7 @@ use crate::{
 pub(crate) mod ast;
 pub(crate) mod engine;
 pub mod error;
+pub(crate) mod funcs;
 pub(crate) mod lexer;
 pub(crate) mod parser;
 pub(crate) mod proxy;

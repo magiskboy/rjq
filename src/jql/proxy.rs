@@ -35,13 +35,6 @@ impl<'a> Proxy<'a> {
         }
     }
 
-    pub fn len(&self) -> Result<JsonValue<'a>, JqlError> {
-        self.data()
-            .len()
-            .map(|l| JsonValue::number(l as f64))
-            .map_err(JqlError::from)
-    }
-
     pub fn data(&self) -> &JsonValue<'a> {
         match &self.data {
             ValueRef::Borrowed(v) => v,

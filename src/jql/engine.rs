@@ -4,7 +4,8 @@ use crate::{
     jql::{
         ast::{AccessStep, JqlAstNode, JqlBinaryKind, JqlNumericKind, ObjectField, ObjectKey},
         error::{JqlError, JqlErrorKind},
-        proxy::{Proxy, ValueRef},
+        funcs,
+        proxy::Proxy,
     },
     json::{
         error::JsonError,
@@ -24,7 +25,7 @@ impl Engine {
             | JqlAstNode::String(_) => Ok(Self::literal(path)),
             JqlAstNode::Access(steps) => Self::access(value, steps),
             JqlAstNode::Pipe { source, dest } => Self::pipe(value, source, dest),
-            JqlAstNode::Call { name, args } => Self::call(name, args, value),
+            JqlAstNode::Call { name, args } => funcs::dispatch(name, args, value),
             JqlAstNode::Numeric { kind, left, right } => Self::numeric(kind, left, right, value),
             JqlAstNode::Binary { kind, left, right } => Self::binary(kind, left, right, value),
             JqlAstNode::Object { fields } => Self::object(value, fields),
@@ -52,60 +53,6 @@ impl Engine {
         dest: &JqlAstNode<'_>,
     ) -> Result<Proxy<'a>, JqlError> {
         Self::execute(value, source).and_then(|r| Self::execute(r, dest))
-    }
-
-    fn call<'a>(
-        name: &str,
-        args: &[JqlAstNode<'_>],
-        value: Proxy<'a>,
-    ) -> Result<Proxy<'a>, JqlError> {
-        match name {
-            "filter" => Self::filter(value, &args[0]),
-            "map" => Self::map(value, &args[0]),
-            "len" => Self::len(value, &args[0]),
-            "sum" => Self::sum(value, &args[0]),
-            "first" => Self::first(value),
-            "last" => Self::last(value),
-            other => Err(op_not_support(other)),
-        }
-    }
-
-    pub fn len<'a>(value: Proxy<'a>, path: &JqlAstNode<'_>) -> Result<Proxy<'a>, JqlError> {
-        let output = Self::execute(value, path)?;
-        let l = output.len()?;
-        Ok(Proxy::owned(l))
-    }
-
-    pub fn sum<'a>(value: Proxy<'a>, path: &JqlAstNode<'_>) -> Result<Proxy<'a>, JqlError> {
-        let output = Self::execute(value, path)?;
-        match output.data() {
-            JsonValue::Array(items) => {
-                let mut s = 0.0_f64;
-                for item in items {
-                    match item {
-                        JsonValue::Number(v) => {
-                            s += v.as_f64().map_err(|_| {
-                                JqlError::without_span(JqlErrorKind::TypeMismatch {
-                                    expected: "number",
-                                    found: "number",
-                                })
-                            })?;
-                        }
-                        other => {
-                            return Err(JqlError::without_span(JqlErrorKind::TypeMismatch {
-                                expected: "number",
-                                found: json_value_type_name(other),
-                            }));
-                        }
-                    }
-                }
-                Ok(Proxy::owned(JsonValue::number(s)))
-            }
-            other => Err(JqlError::without_span(JqlErrorKind::TypeMismatch {
-                expected: "array",
-                found: json_value_type_name(other),
-            })),
-        }
     }
 
     pub fn numeric<'a>(
@@ -188,74 +135,6 @@ impl Engine {
         Ok(Proxy::owned(JsonValue::boolean(result)))
     }
 
-    fn filter<'a>(value: Proxy<'a>, predictive: &JqlAstNode<'_>) -> Result<Proxy<'a>, JqlError> {
-        match value.data {
-            ValueRef::Borrowed(v) => match v {
-                JsonValue::Array(items) => {
-                    let mut filtered = Vec::new();
-                    for x in items {
-                        let p = Engine::execute(Proxy::new(x), predictive)?;
-                        if matches!(p.data(), JsonValue::True) {
-                            // Structure clone only; scalar Cow leaves stay borrowed.
-                            filtered.push(x.clone());
-                        }
-                    }
-                    Ok(Proxy::owned(JsonValue::array(filtered)))
-                }
-                other => Err(type_mismatch_array(other)),
-            },
-            ValueRef::Shared(rc) => filter_items(rc.as_ref(), predictive),
-            ValueRef::Owned(v) => match v {
-                JsonValue::Array(items) => {
-                    // Unique owner: share each item for the predicate, then move it
-                    // back out on match (Rc::try_unwrap) instead of cloning twice.
-                    let mut filtered = Vec::new();
-                    for x in items {
-                        let item = Proxy::owned(x).share();
-                        let keep = matches!(
-                            Engine::execute(item.clone(), predictive)?.data(),
-                            JsonValue::True
-                        );
-                        if keep {
-                            filtered.push(item.into_value());
-                        }
-                    }
-                    Ok(Proxy::owned(JsonValue::array(filtered)))
-                }
-                other => Err(type_mismatch_array(&other)),
-            },
-        }
-    }
-
-    fn map<'a>(value: Proxy<'a>, transform: &JqlAstNode<'_>) -> Result<Proxy<'a>, JqlError> {
-        match value.data {
-            ValueRef::Borrowed(v) => match v {
-                JsonValue::Array(items) => {
-                    let mut mapped = Vec::with_capacity(items.len());
-                    for x in items {
-                        // Keep element borrowed so nested access stays zero-copy.
-                        let p = Engine::execute(Proxy::new(x), transform)?;
-                        mapped.push(p.into_value());
-                    }
-                    Ok(Proxy::owned(JsonValue::array(mapped)))
-                }
-                other => Err(type_mismatch_array(other)),
-            },
-            ValueRef::Shared(rc) => map_items(rc.as_ref(), transform),
-            ValueRef::Owned(v) => match v {
-                JsonValue::Array(items) => {
-                    let mut mapped = Vec::with_capacity(items.len());
-                    for x in items {
-                        let p = Engine::execute(Proxy::owned(x), transform)?;
-                        mapped.push(p.into_value());
-                    }
-                    Ok(Proxy::owned(JsonValue::array(mapped)))
-                }
-                other => Err(type_mismatch_array(&other)),
-            },
-        }
-    }
-
     fn object<'a>(value: Proxy<'a>, fields: &[ObjectField<'_>]) -> Result<Proxy<'a>, JqlError> {
         let value = value.share();
         let mut entries = Vec::with_capacity(fields.len());
@@ -269,58 +148,6 @@ impl Engine {
         }
         Ok(Proxy::owned(JsonValue::object(entries)))
     }
-
-    fn first<'a>(value: Proxy<'a>) -> Result<Proxy<'a>, JqlError> {
-        Ok(value.take_first())
-    }
-
-    fn last<'a>(value: Proxy<'a>) -> Result<Proxy<'a>, JqlError> {
-        Ok(value.take_last())
-    }
-}
-
-fn filter_items<'a>(
-    data: &JsonValue<'a>,
-    predictive: &JqlAstNode<'_>,
-) -> Result<Proxy<'a>, JqlError> {
-    match data {
-        JsonValue::Array(items) => {
-            let mut filtered = Vec::new();
-            for x in items {
-                let item = Proxy::owned(x.clone()).share();
-                let keep = matches!(
-                    Engine::execute(item.clone(), predictive)?.data(),
-                    JsonValue::True
-                );
-                if keep {
-                    filtered.push(item.into_value());
-                }
-            }
-            Ok(Proxy::owned(JsonValue::array(filtered)))
-        }
-        other => Err(type_mismatch_array(other)),
-    }
-}
-
-fn map_items<'a>(data: &JsonValue<'a>, transform: &JqlAstNode<'_>) -> Result<Proxy<'a>, JqlError> {
-    match data {
-        JsonValue::Array(items) => {
-            let mut mapped = Vec::with_capacity(items.len());
-            for x in items {
-                let p = Engine::execute(Proxy::owned(x.clone()), transform)?;
-                mapped.push(p.into_value());
-            }
-            Ok(Proxy::owned(JsonValue::array(mapped)))
-        }
-        other => Err(type_mismatch_array(other)),
-    }
-}
-
-fn type_mismatch_array(other: &JsonValue<'_>) -> JqlError {
-    JqlError::without_span(JqlErrorKind::TypeMismatch {
-        expected: "array",
-        found: json_value_type_name(other),
-    })
 }
 
 fn json_exec_error(err: JsonError) -> JqlError {
@@ -329,17 +156,6 @@ fn json_exec_error(err: JsonError) -> JqlError {
 
 fn op_not_support(op: &str) -> JqlError {
     JqlError::without_span(JqlErrorKind::UnsupportedOperation { op: op.to_string() })
-}
-
-fn json_value_type_name(value: &JsonValue<'_>) -> &'static str {
-    match value {
-        JsonValue::Null => "null",
-        JsonValue::True | JsonValue::False => "boolean",
-        JsonValue::Number(_) => "number",
-        JsonValue::String(_) => "string",
-        JsonValue::Array(_) => "array",
-        JsonValue::Object(_) => "object",
-    }
 }
 
 #[cfg(test)]
