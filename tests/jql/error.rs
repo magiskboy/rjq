@@ -1,6 +1,6 @@
 use super::{ExpectedSyntax, JqlError, JqlErrorKind};
-use crate::jql::token::JqlTokenKind;
 use crate::Span;
+use crate::jql::token::JqlTokenKind;
 
 fn err(kind: JqlErrorKind, start: usize, end: usize) -> JqlError {
     let source = "x".repeat(end.max(1));

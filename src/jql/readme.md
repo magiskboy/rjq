@@ -13,8 +13,10 @@
 
 <root_access> ::= "."
 
-<access_step> ::= "." <string>
+<access_step> ::= "." <ident>
+                | "." "\"" <key_chars> "\""
                 | "." "[" <number> "]"
+                | "." "[" "\"" <key_chars> "\"" "]"
 
 <call> ::= <identifier> "(" <expression> ")"
 
@@ -41,17 +43,21 @@
 
 <literal> ::= <string_value> | <boolean> | <number>
 
-<number> ::= [0-9]
+<number> ::= ["-"] <digits> ["." <digits>] [("e" | "E") ["+" | "-"] <digits>]
 
 <boolean> ::= "true" | "false"
 
-<string> ::= [a-z] | [A-Z]
+<ident> ::= ([a-z] | [A-Z] | "_") ([a-z] | [A-Z] | [0-9] | "_")*
+
+<proj_key> ::= <ident> | <digits> | <string_value>
 
 <null> ::= "null"
 
 <space> ::= " "
 
-<string_value> ::= "\"" ([a-z] | [A-Z] | [0-9] | " ") "\""
+<string_value> ::= "\"" <key_chars> "\""
+
+<key_chars> ::= any chars except '"'
 ```
 
 Grammar of access identifier
@@ -63,10 +69,14 @@ Grammar of access identifier
 .jobs[1,2] -> Iterator<Job>
 .jobs[1:3] -> Iterator<Job>
 
+."kebab-case" / .["x-y"] / ."with space"  -> key with -, space, unicode
+._id                                      -> underscore key
+
 .person{}           -> Iterator<Pair>
 .person{}@keys      -> Iterator<Pair[0]>
 .person{}@values    -> Iterator<Pair[1]>
 .person{name,age}   -> Iterator<Pair if Pair[0] in [name, age]>
+.person{_id,name2,0,"a-b"} -> projection keys: _, digits, quoted
 
 .jobs[]{}  -> Iterator<Job>
 .jobs[]{title,description} -> Iterator<Pair if Pair[0] in [title, description]>

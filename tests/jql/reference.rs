@@ -35,9 +35,7 @@ fn prop(name: &str) -> Access {
 fn prop_select(name: &str, keys: &[&str]) -> Access {
     Access::PropertyAccess {
         property: name.to_string(),
-        properties: PropertySelection::Properties(
-            keys.iter().map(|k| (*k).to_string()).collect(),
-        ),
+        properties: PropertySelection::Properties(keys.iter().map(|k| (*k).to_string()).collect()),
     }
 }
 
@@ -51,9 +49,7 @@ fn index(index: ArrayIndex) -> Access {
 fn index_select(index: ArrayIndex, keys: &[&str]) -> Access {
     Access::IndexAccess {
         index,
-        properties: PropertySelection::Properties(
-            keys.iter().map(|k| (*k).to_string()).collect(),
-        ),
+        properties: PropertySelection::Properties(keys.iter().map(|k| (*k).to_string()).collect()),
     }
 }
 
@@ -300,4 +296,71 @@ fn array_all_then_object_multiple_properties() {
             ],
         }
     );
+}
+
+#[test]
+fn quoted_dot_property() {
+    assert_eq!(
+        parse(".\"kebab-case\""),
+        Reference {
+            access: vec![root(), prop("kebab-case")],
+        }
+    );
+    assert_eq!(
+        parse(".\"with space\""),
+        Reference {
+            access: vec![root(), prop("with space")],
+        }
+    );
+    assert_eq!(
+        parse(".\"café\""),
+        Reference {
+            access: vec![root(), prop("café")],
+        }
+    );
+}
+
+#[test]
+fn bracket_string_property() {
+    assert_eq!(
+        parse(".[\"x-y\"]"),
+        Reference {
+            access: vec![root(), prop("x-y")],
+        }
+    );
+    assert_eq!(
+        parse(".meta[\"api-version\"]"),
+        Reference {
+            access: vec![root(), prop("meta"), prop("api-version")],
+        }
+    );
+}
+
+#[test]
+fn underscore_property_and_wide_projection() {
+    assert_eq!(
+        parse("._id"),
+        Reference {
+            access: vec![root(), prop("_id")],
+        }
+    );
+    assert_eq!(
+        parse(".person{_id,name2,0}"),
+        Reference {
+            access: vec![root(), prop_select("person", &["_id", "name2", "0"])],
+        }
+    );
+    assert_eq!(
+        parse(".person{\"_id\",\"a-b\"}"),
+        Reference {
+            access: vec![root(), prop_select("person", &["_id", "a-b"])],
+        }
+    );
+}
+
+#[test]
+fn rejects_unclosed_quoted_property() {
+    parse_err(".\"kebab");
+    parse_err(".[\"x-y\"");
+    parse_err(".person{\"a-b}");
 }

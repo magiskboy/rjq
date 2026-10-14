@@ -268,7 +268,6 @@ impl Display for JsonError {
     }
 }
 
-
 #[cfg(test)]
 #[path = "../../tests/json/error.rs"]
 mod tests;

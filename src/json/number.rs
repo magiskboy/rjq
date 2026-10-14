@@ -256,8 +256,8 @@ mod tests {
             ("3.14", 4, FloatLike),
             ("1e2", 3, FloatLike),
             ("-2.5E+1", 7, FloatLike),
-            ("12,", 2, IntegerLike),  // stops at separator
-            ("5]", 1, IntegerLike),   // stops at separator
+            ("12,", 2, IntegerLike), // stops at separator
+            ("5]", 1, IntegerLike),  // stops at separator
         ];
         for (s, len, kind) in cases {
             assert_eq!(scan_number(s.as_bytes()), Ok((len, kind)), "input {s:?}");

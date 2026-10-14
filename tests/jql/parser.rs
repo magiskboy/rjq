@@ -88,6 +88,29 @@ fn literals() {
     );
     assert_eq!(parse("0", &[(JqlTokenKind::Number, "0")]), Ok(number(0.0)));
     assert_eq!(
+        parse("-1", &[(JqlTokenKind::Number, "-1")]),
+        Ok(number(-1.0))
+    );
+    assert_eq!(
+        parse("3.14", &[(JqlTokenKind::Number, "3.14")]),
+        Ok(number(3.14))
+    );
+    assert_eq!(
+        parse("1e2", &[(JqlTokenKind::Number, "1e2")]),
+        Ok(number(100.0))
+    );
+    assert_eq!(
+        parse(".[\"x-y\"]", &[(JqlTokenKind::Identifier, ".[\"x-y\"]")]),
+        Ok(access(".[\"x-y\"]"))
+    );
+    assert_eq!(
+        parse(
+            ".\"kebab-case\"",
+            &[(JqlTokenKind::Identifier, ".\"kebab-case\"")]
+        ),
+        Ok(access(".\"kebab-case\""))
+    );
+    assert_eq!(
         parse("\"hi\"", &[(JqlTokenKind::String, "\"hi\"")]),
         Ok(string("hi"))
     );

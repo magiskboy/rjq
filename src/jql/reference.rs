@@ -37,15 +37,21 @@ pub struct Reference {
 enum ParseReferenceState {
     StartProperty,
     InProperty,
+    InQuotedProperty,
+    CloseQuotedProperty,
     StartArrayIndex,
     InArrayIndex,
     InArraySlice,
     InArraySliceColon,
     InMultipleIndex,
     InMultipleIndexComma,
+    InBracketString,
+    CloseBracketString,
     CloseArrayIndex,
     StartPropertySelection,
     InPropertySelection,
+    InQuotedPropertySelection,
+    CloseQuotedPropertySelection,
     InPropertyComma,
     ClosePropertySelection,
     InvalidCharacter,
@@ -71,6 +77,19 @@ impl Reference {
                 })
             }
 
+            ParseReferenceState::CloseQuotedProperty => {
+                let raw = source
+                    .get(start..end)
+                    .ok_or_else(|| Self::invalid_access(source))?;
+                if raw.len() < 2 || !raw.starts_with('"') || !raw.ends_with('"') {
+                    return Err(Self::invalid_access(source));
+                }
+                Ok(Access::PropertyAccess {
+                    property: raw[1..raw.len() - 1].to_string(),
+                    properties: PropertySelection::All,
+                })
+            }
+
             ParseReferenceState::CloseArrayIndex => {
                 let s = source
                     .get(start..end - 1)
@@ -79,6 +98,14 @@ impl Reference {
                 if s.is_empty() {
                     return Ok(Access::IndexAccess {
                         index: ArrayIndex::All,
+                        properties: PropertySelection::All,
+                    });
+                }
+
+                // .["kebab-case"] / .["x y"] — string key inside brackets.
+                if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+                    return Ok(Access::PropertyAccess {
+                        property: s[1..s.len() - 1].to_string(),
                         properties: PropertySelection::All,
                     });
                 }
@@ -115,13 +142,10 @@ impl Reference {
                     .get(start..end - 1)
                     .ok_or_else(|| Self::invalid_access(source))?;
                 if let Some(lbrace) = s.find('{') {
-                    let keys: Vec<String> = s
+                    let inner = s
                         .get(lbrace + 1..)
-                        .ok_or_else(|| Self::invalid_access(source))?
-                        .split(",")
-                        .map(|x| x.to_string())
-                        .filter(|x| !x.is_empty())
-                        .collect();
+                        .ok_or_else(|| Self::invalid_access(source))?;
+                    let keys = Self::parse_projection_keys(inner, source)?;
 
                     let selected_props = if keys.is_empty() {
                         PropertySelection::All
@@ -154,14 +178,25 @@ impl Reference {
     fn transition_table(state: &ParseReferenceState, c: char) -> Option<ParseReferenceState> {
         let next_state = match state {
             ParseReferenceState::StartProperty => match c {
-                'a'..='z' | 'A'..='Z' => ParseReferenceState::InProperty,
+                'a'..='z' | 'A'..='Z' | '_' => ParseReferenceState::InProperty,
+                '"' => ParseReferenceState::InQuotedProperty,
                 '{' => ParseReferenceState::StartPropertySelection,
                 '[' => ParseReferenceState::StartArrayIndex,
                 '.' => ParseReferenceState::StartProperty,
                 _ => ParseReferenceState::InvalidCharacter,
             },
             ParseReferenceState::InProperty => match c {
-                'a'..='z' | 'A'..='Z' | '0'..='9' => ParseReferenceState::InProperty,
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => ParseReferenceState::InProperty,
+                '.' => ParseReferenceState::StartProperty,
+                '[' => ParseReferenceState::StartArrayIndex,
+                '{' => ParseReferenceState::StartPropertySelection,
+                _ => ParseReferenceState::InvalidCharacter,
+            },
+            ParseReferenceState::InQuotedProperty => match c {
+                '"' => ParseReferenceState::CloseQuotedProperty,
+                _ => ParseReferenceState::InQuotedProperty,
+            },
+            ParseReferenceState::CloseQuotedProperty => match c {
                 '.' => ParseReferenceState::StartProperty,
                 '[' => ParseReferenceState::StartArrayIndex,
                 '{' => ParseReferenceState::StartPropertySelection,
@@ -169,6 +204,7 @@ impl Reference {
             },
             ParseReferenceState::StartArrayIndex => match c {
                 '0'..='9' => ParseReferenceState::InArrayIndex,
+                '"' => ParseReferenceState::InBracketString,
                 ']' => ParseReferenceState::CloseArrayIndex,
                 _ => ParseReferenceState::InvalidCharacter,
             },
@@ -177,6 +213,14 @@ impl Reference {
                 ']' => ParseReferenceState::CloseArrayIndex,
                 ',' => ParseReferenceState::InMultipleIndexComma,
                 ':' => ParseReferenceState::InArraySliceColon,
+                _ => ParseReferenceState::InvalidCharacter,
+            },
+            ParseReferenceState::InBracketString => match c {
+                '"' => ParseReferenceState::CloseBracketString,
+                _ => ParseReferenceState::InBracketString,
+            },
+            ParseReferenceState::CloseBracketString => match c {
+                ']' => ParseReferenceState::CloseArrayIndex,
                 _ => ParseReferenceState::InvalidCharacter,
             },
             ParseReferenceState::InMultipleIndexComma => match c {
@@ -200,19 +244,30 @@ impl Reference {
             },
 
             ParseReferenceState::StartPropertySelection => match c {
-                'a'..='z' | 'A'..='Z' => ParseReferenceState::InPropertySelection,
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => ParseReferenceState::InPropertySelection,
+                '"' => ParseReferenceState::InQuotedPropertySelection,
                 ',' => ParseReferenceState::InPropertyComma,
                 '}' => ParseReferenceState::ClosePropertySelection,
                 _ => ParseReferenceState::InvalidCharacter,
             },
             ParseReferenceState::InPropertySelection => match c {
-                'a'..='z' | 'A'..='Z' => ParseReferenceState::InPropertySelection,
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => ParseReferenceState::InPropertySelection,
+                ',' => ParseReferenceState::InPropertyComma,
+                '}' => ParseReferenceState::ClosePropertySelection,
+                _ => ParseReferenceState::InvalidCharacter,
+            },
+            ParseReferenceState::InQuotedPropertySelection => match c {
+                '"' => ParseReferenceState::CloseQuotedPropertySelection,
+                _ => ParseReferenceState::InQuotedPropertySelection,
+            },
+            ParseReferenceState::CloseQuotedPropertySelection => match c {
                 ',' => ParseReferenceState::InPropertyComma,
                 '}' => ParseReferenceState::ClosePropertySelection,
                 _ => ParseReferenceState::InvalidCharacter,
             },
             ParseReferenceState::InPropertyComma => match c {
-                'a'..='z' | 'A'..='Z' => ParseReferenceState::InPropertySelection,
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => ParseReferenceState::InPropertySelection,
+                '"' => ParseReferenceState::InQuotedPropertySelection,
                 _ => ParseReferenceState::InvalidCharacter,
             },
             ParseReferenceState::CloseArrayIndex => match c {
@@ -242,8 +297,77 @@ impl Reference {
     }
 
     fn parse_usize(raw: &str, path: &str) -> Result<usize, JqlError> {
-        raw.parse::<usize>()
-            .map_err(|_| Self::invalid_access(path))
+        raw.parse::<usize>().map_err(|_| Self::invalid_access(path))
+    }
+
+    /// Parse `{a,_id,0,"x-y"}` key list (inner slice, no braces).
+    fn parse_projection_keys(inner: &str, path: &str) -> Result<Vec<String>, JqlError> {
+        let mut keys = Vec::new();
+        let mut i = 0;
+        let bytes = inner.as_bytes();
+
+        while i < bytes.len() {
+            let c = inner[i..]
+                .chars()
+                .next()
+                .ok_or_else(|| Self::invalid_access(path))?;
+
+            if c == ',' {
+                i += 1;
+                continue;
+            }
+
+            if c == '"' {
+                let content_start = i + 1;
+                let mut j = content_start;
+                let mut closed = false;
+                while j < bytes.len() {
+                    if bytes[j] == b'"' {
+                        closed = true;
+                        break;
+                    }
+                    j += 1;
+                }
+                if !closed {
+                    return Err(Self::invalid_access(path));
+                }
+                keys.push(
+                    inner
+                        .get(content_start..j)
+                        .ok_or_else(|| Self::invalid_access(path))?
+                        .to_string(),
+                );
+                i = j + 1;
+                continue;
+            }
+
+            if matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_') {
+                let key_start = i;
+                i += c.len_utf8();
+                while i < bytes.len() {
+                    let ch = inner[i..]
+                        .chars()
+                        .next()
+                        .ok_or_else(|| Self::invalid_access(path))?;
+                    if matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_') {
+                        i += ch.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+                keys.push(
+                    inner
+                        .get(key_start..i)
+                        .ok_or_else(|| Self::invalid_access(path))?
+                        .to_string(),
+                );
+                continue;
+            }
+
+            return Err(Self::invalid_access(path));
+        }
+
+        Ok(keys)
     }
 }
 
@@ -275,7 +399,10 @@ impl FromStr for Reference {
         let mut start: usize = 1;
 
         while idx < s.len() {
-            let ch = s.chars().nth(idx).ok_or_else(|| Self::invalid_access(s))?;
+            let ch = s[idx..]
+                .chars()
+                .next()
+                .ok_or_else(|| Self::invalid_access(s))?;
             let Some(new_state) = Self::transition_table(&state, ch) else {
                 return Err(Self::invalid_access(s));
             };
@@ -330,13 +457,13 @@ impl FromStr for Reference {
 
         match state {
             ParseReferenceState::InProperty
+            | ParseReferenceState::CloseQuotedProperty
             | ParseReferenceState::CloseArrayIndex
             | ParseReferenceState::ClosePropertySelection => Ok(Self { access }),
             _ => Err(Self::invalid_access(s)),
         }
     }
 }
-
 
 #[cfg(test)]
 #[path = "../../tests/jql/reference.rs"]

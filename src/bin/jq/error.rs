@@ -22,10 +22,7 @@ impl Display for AppError {
                 path: Some(path),
                 source,
             } => write!(f, "cannot read {path}: {source}"),
-            Self::Io {
-                path: None,
-                source,
-            } => write!(f, "cannot read input: {source}"),
+            Self::Io { path: None, source } => write!(f, "cannot read input: {source}"),
             Self::Json(err) => write!(f, "{err}"),
             Self::Jql(err) => write!(f, "{err}"),
         }

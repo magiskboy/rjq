@@ -45,8 +45,11 @@ fn end_to_end_access_pipeline_and_filter() {
 fn end_to_end_map_and_object_construct() {
     let data = fixture::sample();
     assert_eq!(
-        jql_execute(&data, ".jobs | filter(.id > 2) | map({ name: .title, pay: .money })")
-            .unwrap(),
+        jql_execute(
+            &data,
+            ".jobs | filter(.id > 2) | map({ name: .title, pay: .money })"
+        )
+        .unwrap(),
         JsonValue::array(vec![
             JsonValue::object([
                 ("name".to_string(), JsonValue::string("PM".to_string())),
@@ -65,10 +68,9 @@ fn end_to_end_parse_then_execute_matches_direct_execute() {
     let data = fixture::sample();
     let query = ".people | filter(.vip == true && .score >= 70) | .[1].name";
     let ast = jql_parse(query).expect("parse");
-    let via_ast =
-        crate::jql::engine::Engine::execute(crate::jql::proxy::Proxy::new(&data), &ast)
-            .unwrap()
-            .into_value();
+    let via_ast = crate::jql::engine::Engine::execute(crate::jql::proxy::Proxy::new(&data), &ast)
+        .unwrap()
+        .into_value();
     assert_eq!(via_ast, jql_execute(&data, query).unwrap());
     assert_eq!(via_ast, JsonValue::string("Dave".to_string()));
 }

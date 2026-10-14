@@ -44,10 +44,7 @@ impl<'a> JsonParser<'a> {
         lexer: Lexer<'a>,
         builder: &mut B,
     ) -> Result<B::Value, B::Error> {
-        let mut parser = Self {
-            last_end: 0,
-            lexer,
-        };
+        let mut parser = Self { last_end: 0, lexer };
         parser.skip_ws();
         if parser.peek().is_none() {
             let end = parser.lexer.position();
@@ -140,10 +137,7 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn parse_object<B: JsonBuilder<'a>>(
-        &mut self,
-        builder: &mut B,
-    ) -> Result<B::Value, B::Error> {
+    fn parse_object<B: JsonBuilder<'a>>(&mut self, builder: &mut B) -> Result<B::Value, B::Error> {
         self.expect_byte(b'{')?;
         let mut object = builder.begin_object()?;
 
@@ -158,9 +152,7 @@ impl<'a> JsonParser<'a> {
             let key_token = match self.peek() {
                 Some(b'"') => self.next_value_token()?,
                 None => {
-                    return Err(self
-                        .eof_error(ExpectedSyntax::Byte(b'}'))
-                        .into());
+                    return Err(self.eof_error(ExpectedSyntax::Byte(b'}')).into());
                 }
                 Some(b) => {
                     return Err(self
@@ -215,9 +207,7 @@ impl<'a> JsonParser<'a> {
                     break;
                 }
                 None => {
-                    return Err(self
-                        .eof_error(ExpectedSyntax::Byte(b'}'))
-                        .into());
+                    return Err(self.eof_error(ExpectedSyntax::Byte(b'}')).into());
                 }
                 Some(b) => {
                     return Err(self
@@ -230,10 +220,7 @@ impl<'a> JsonParser<'a> {
         builder.end_object(object)
     }
 
-    fn parse_array<B: JsonBuilder<'a>>(
-        &mut self,
-        builder: &mut B,
-    ) -> Result<B::Value, B::Error> {
+    fn parse_array<B: JsonBuilder<'a>>(&mut self, builder: &mut B) -> Result<B::Value, B::Error> {
         self.expect_byte(b'[')?;
         let mut array = builder.begin_array()?;
 
@@ -247,9 +234,7 @@ impl<'a> JsonParser<'a> {
             self.skip_ws();
             match self.peek() {
                 None => {
-                    return Err(self
-                        .eof_error(ExpectedSyntax::Byte(b']'))
-                        .into());
+                    return Err(self.eof_error(ExpectedSyntax::Byte(b']')).into());
                 }
                 Some(b) if !Self::starts_value(b) => {
                     return Err(self
@@ -279,9 +264,7 @@ impl<'a> JsonParser<'a> {
                     break;
                 }
                 None => {
-                    return Err(self
-                        .eof_error(ExpectedSyntax::Byte(b']'))
-                        .into());
+                    return Err(self.eof_error(ExpectedSyntax::Byte(b']')).into());
                 }
                 Some(b) => {
                     return Err(self
@@ -294,10 +277,7 @@ impl<'a> JsonParser<'a> {
         builder.end_array(array)
     }
 
-    fn parse_value<B: JsonBuilder<'a>>(
-        &mut self,
-        builder: &mut B,
-    ) -> Result<B::Value, B::Error> {
+    fn parse_value<B: JsonBuilder<'a>>(&mut self, builder: &mut B) -> Result<B::Value, B::Error> {
         self.skip_ws();
         match self.peek() {
             Some(b'{') => self.parse_object(builder),
@@ -350,10 +330,7 @@ impl<'a> JsonParser<'a> {
             start,
             end: start + 1,
         };
-        self.error(
-            JsonErrorKind::UnexpectedToken { expected, found },
-            span,
-        )
+        self.error(JsonErrorKind::UnexpectedToken { expected, found }, span)
     }
 
     fn starts_value(b: u8) -> bool {
@@ -363,7 +340,6 @@ impl<'a> JsonParser<'a> {
         )
     }
 }
-
 
 #[cfg(test)]
 #[path = "../../tests/json/parser.rs"]

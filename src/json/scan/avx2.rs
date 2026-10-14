@@ -73,7 +73,10 @@ unsafe fn find_non_whitespace_avx2(haystack: &[u8]) -> Option<usize> {
     while offset + 32 <= haystack.len() {
         let block = unsafe { _mm256_loadu_si256(haystack.as_ptr().add(offset) as *const __m256i) };
         let is_ws = _mm256_or_si256(
-            _mm256_or_si256(_mm256_cmpeq_epi8(block, space), _mm256_cmpeq_epi8(block, tab)),
+            _mm256_or_si256(
+                _mm256_cmpeq_epi8(block, space),
+                _mm256_cmpeq_epi8(block, tab),
+            ),
             _mm256_or_si256(_mm256_cmpeq_epi8(block, lf), _mm256_cmpeq_epi8(block, cr)),
         );
         // Bits set where byte is NOT whitespace.

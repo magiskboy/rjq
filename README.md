@@ -49,6 +49,8 @@ Queries below run against the fixture `src/jql/sample.json`.
 .jobs[]                        # all items (identity on array)
 .person{name,age}              # project object keys
 .jobs[]{title,description}     # project keys on each item
+."kebab-case" / .["x-y"]       # keys with -, space, unicode
+._id / .person{_id,0,"a-b"}    # underscore / digit / quoted projection keys
 .company.teams[0].name         # "platform"
 .matrix[0][1]                  # nested index → 2
 .nested[1][1][0]               # deep nest → 3

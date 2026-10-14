@@ -73,8 +73,7 @@ impl<'py> PyBuilder<'py> {
         }
         let py_str = PyString::new(self.py, key);
         let owned: Py<PyString> = py_str.unbind();
-        self.key_cache
-            .insert(key.into(), owned.clone_ref(self.py));
+        self.key_cache.insert(key.into(), owned.clone_ref(self.py));
         Ok(owned)
     }
 }

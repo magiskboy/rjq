@@ -3,8 +3,8 @@ use std::{
     fmt::{self, Display, Formatter},
 };
 
-use crate::json::error::JsonError;
 use crate::jql::token::JqlTokenKind;
+use crate::json::error::JsonError;
 use crate::{Location, Span};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,7 +179,6 @@ impl Display for JqlError {
         }
     }
 }
-
 
 #[cfg(test)]
 #[path = "../../tests/jql/error.rs"]

@@ -131,18 +131,12 @@ fn unicode_string_keeps_following_byte_spans() {
     // Structural bytes are skipped by tokenize; value spans stay byte-accurate.
     assert_kinds_spans(
         "\"é\",1",
-        &[
-            (JsonTokenKind::String, 0, 4),
-            (JsonTokenKind::Number, 5, 6),
-        ],
+        &[(JsonTokenKind::String, 0, 4), (JsonTokenKind::Number, 5, 6)],
     );
 
     assert_kinds_spans(
         "{\"a\":\"é\"}",
-        &[
-            (JsonTokenKind::String, 1, 4),
-            (JsonTokenKind::String, 5, 9),
-        ],
+        &[(JsonTokenKind::String, 1, 4), (JsonTokenKind::String, 5, 9)],
     );
 
     assert_kinds_spans("[\"🙂\"]", &[(JsonTokenKind::String, 1, 7)]);
@@ -240,7 +234,12 @@ fn number_then_structural() {
     let cases: [&str; 3] = ["10,", "10]", "10}"];
     for s in cases {
         let tokens = run(s).expect("should lex");
-        assert_eq!(kinds(&tokens), vec![JsonTokenKind::Number], "source {:?}", s);
+        assert_eq!(
+            kinds(&tokens),
+            vec![JsonTokenKind::Number],
+            "source {:?}",
+            s
+        );
         assert_eq!(tokens[0].span, Span { start: 0, end: 2 });
     }
 }

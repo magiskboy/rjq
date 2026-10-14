@@ -40,6 +40,11 @@ enum JqlLexerState {
     InNul,
     InNull,
     InNumber,
+    InNumberDot,
+    InNumberFrac,
+    InNumberExp,
+    InNumberExpSign,
+    InNumberExpDigit,
     OpenString,
     InString,
     CloseString,
@@ -47,8 +52,11 @@ enum JqlLexerState {
     // Identifiers & paths
     InIdentifier,
     InPathIdentifier,
+    InPathInString,
     InPathInBracket,
+    InPathInBracketString,
     InPathInBrace,
+    InPathInBraceString,
 
     // Operators
     StartEqual,
@@ -140,6 +148,30 @@ impl<'a> JqlLexer<'a> {
             },
             JqlLexerState::InNumber => match c {
                 '0'..='9' => JqlLexerState::InNumber,
+                '.' => JqlLexerState::InNumberDot,
+                'e' | 'E' => JqlLexerState::InNumberExp,
+                _ => JqlLexerState::InvalidToken,
+            },
+            JqlLexerState::InNumberDot => match c {
+                '0'..='9' => JqlLexerState::InNumberFrac,
+                _ => JqlLexerState::InvalidToken,
+            },
+            JqlLexerState::InNumberFrac => match c {
+                '0'..='9' => JqlLexerState::InNumberFrac,
+                'e' | 'E' => JqlLexerState::InNumberExp,
+                _ => JqlLexerState::InvalidToken,
+            },
+            JqlLexerState::InNumberExp => match c {
+                '+' | '-' => JqlLexerState::InNumberExpSign,
+                '0'..='9' => JqlLexerState::InNumberExpDigit,
+                _ => JqlLexerState::InvalidToken,
+            },
+            JqlLexerState::InNumberExpSign => match c {
+                '0'..='9' => JqlLexerState::InNumberExpDigit,
+                _ => JqlLexerState::InvalidToken,
+            },
+            JqlLexerState::InNumberExpDigit => match c {
+                '0'..='9' => JqlLexerState::InNumberExpDigit,
                 _ => JqlLexerState::InvalidToken,
             },
             JqlLexerState::OpenString | JqlLexerState::InString => match c {
@@ -169,19 +201,34 @@ impl<'a> JqlLexer<'a> {
             },
             JqlLexerState::InPathIdentifier => match c {
                 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '.' => JqlLexerState::InPathIdentifier,
+                '"' => JqlLexerState::InPathInString,
                 '[' => JqlLexerState::InPathInBracket,
                 '{' => JqlLexerState::InPathInBrace,
                 _ => JqlLexerState::InvalidToken,
             },
+            JqlLexerState::InPathInString => match c {
+                '"' => JqlLexerState::InPathIdentifier,
+                _ => JqlLexerState::InPathInString,
+            },
             JqlLexerState::InPathInBracket => match c {
                 '0'..='9' | ':' | ',' => JqlLexerState::InPathInBracket,
+                '"' => JqlLexerState::InPathInBracketString,
                 ']' => JqlLexerState::InPathIdentifier,
                 _ => JqlLexerState::InvalidToken,
             },
+            JqlLexerState::InPathInBracketString => match c {
+                '"' => JqlLexerState::InPathInBracket,
+                _ => JqlLexerState::InPathInBracketString,
+            },
             JqlLexerState::InPathInBrace => match c {
-                'a'..='z' | 'A'..='Z' | ',' => JqlLexerState::InPathInBrace,
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | ',' => JqlLexerState::InPathInBrace,
+                '"' => JqlLexerState::InPathInBraceString,
                 '}' => JqlLexerState::InPathIdentifier,
                 _ => JqlLexerState::InvalidToken,
+            },
+            JqlLexerState::InPathInBraceString => match c {
+                '"' => JqlLexerState::InPathInBrace,
+                _ => JqlLexerState::InPathInBraceString,
             },
 
             JqlLexerState::StartEqual => match c {
@@ -202,6 +249,11 @@ impl<'a> JqlLexer<'a> {
             },
             JqlLexerState::StartAnd => match c {
                 '&' => JqlLexerState::InAnd,
+                _ => JqlLexerState::InvalidToken,
+            },
+            // `-` alone is Subtract; `-` + digit continues as a signed Number.
+            JqlLexerState::InSubtract => match c {
+                '0'..='9' => JqlLexerState::InNumber,
                 _ => JqlLexerState::InvalidToken,
             },
 
@@ -242,12 +294,17 @@ impl<'a> JqlLexer<'a> {
             JqlLexerState::InPipe => JqlTokenKind::Pipe,
             JqlLexerState::InFalse | JqlLexerState::InTrue => JqlTokenKind::Boolean,
             JqlLexerState::InNull => JqlTokenKind::Null,
-            JqlLexerState::InNumber => JqlTokenKind::Number,
+            JqlLexerState::InNumber
+            | JqlLexerState::InNumberFrac
+            | JqlLexerState::InNumberExpDigit => JqlTokenKind::Number,
             JqlLexerState::CloseString => JqlTokenKind::String,
             JqlLexerState::InIdentifier
             | JqlLexerState::InPathIdentifier
+            | JqlLexerState::InPathInString
             | JqlLexerState::InPathInBracket
-            | JqlLexerState::InPathInBrace => JqlTokenKind::Identifier,
+            | JqlLexerState::InPathInBracketString
+            | JqlLexerState::InPathInBrace
+            | JqlLexerState::InPathInBraceString => JqlTokenKind::Identifier,
             JqlLexerState::InEqual => JqlTokenKind::EqualOp,
             JqlLexerState::InNotEqual => JqlTokenKind::NotEqualOp,
             JqlLexerState::InGreater => JqlTokenKind::GreaterOp,

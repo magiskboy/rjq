@@ -191,7 +191,46 @@ fn literals_return_json_values() {
     assert_ok(&data, "true", JsonValue::True);
     assert_ok(&data, "false", JsonValue::False);
     assert_ok(&data, "42", JsonValue::number(42.0));
+    assert_ok(&data, "-1", JsonValue::number(-1.0));
+    assert_ok(&data, "3.14", JsonValue::number(3.14));
+    assert_ok(&data, "1e2", JsonValue::number(100.0));
+    assert_ok(&data, "1.2e-3", JsonValue::number(0.0012));
     assert_ok(&data, "\"hi\"", JsonValue::string("hi".to_string()));
+}
+
+#[test]
+fn access_quoted_and_bracket_string_keys() {
+    let data = JsonValue::object([
+        ("kebab-case", JsonValue::number(1.0)),
+        ("x-y", JsonValue::string("ok".to_string())),
+        ("with space", JsonValue::True),
+        (
+            "meta",
+            JsonValue::object([
+                ("_id", JsonValue::number(7.0)),
+                ("api-version", JsonValue::string("v2".to_string())),
+                ("0", JsonValue::number(0.0)),
+            ]),
+        ),
+    ]);
+    assert_ok(&data, ".\"kebab-case\"", JsonValue::number(1.0));
+    assert_ok(&data, ".[\"x-y\"]", JsonValue::string("ok".to_string()));
+    assert_ok(&data, ".\"with space\"", JsonValue::True);
+    assert_ok(&data, ".meta._id", JsonValue::number(7.0));
+    assert_ok(
+        &data,
+        ".meta[\"api-version\"]",
+        JsonValue::string("v2".to_string()),
+    );
+    assert_ok(
+        &data,
+        ".meta{\"_id\",\"api-version\",0}",
+        JsonValue::object([
+            ("_id", JsonValue::number(7.0)),
+            ("api-version", JsonValue::string("v2".to_string())),
+            ("0", JsonValue::number(0.0)),
+        ]),
+    );
 }
 
 #[test]
@@ -471,7 +510,10 @@ fn map_constructs_object_shapes() {
         ".company.teams | map({ name: .name, size: .size })",
         JsonValue::array(vec![
             JsonValue::object([
-                ("name".to_string(), JsonValue::string("platform".to_string())),
+                (
+                    "name".to_string(),
+                    JsonValue::string("platform".to_string()),
+                ),
                 ("size".to_string(), JsonValue::number(8.0)),
             ]),
             JsonValue::object([

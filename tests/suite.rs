@@ -18,7 +18,9 @@ fn fixture(name: &str) -> PathBuf {
 
 fn parse_named(name: &str) -> Result<(), String> {
     let bytes = std::fs::read(fixture(name)).map_err(|e| e.to_string())?;
-    json_load_slice(&bytes).map(|_| ()).map_err(|e| e.to_string())
+    json_load_slice(&bytes)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn assert_accept(name: &str) {
@@ -38,7 +40,10 @@ fn assert_no_panic(name: &str) {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = json_load_slice(&bytes);
     }));
-    assert!(result.is_ok(), "{name}: panicked on implementation-defined input");
+    assert!(
+        result.is_ok(),
+        "{name}: panicked on implementation-defined input"
+    );
 }
 
 // --- must accept (y_) ---
@@ -1618,4 +1623,3 @@ fn i_string_utf16LE_no_BOM() {
 fn i_structure_UTF_minus_8_BOM_empty_object() {
     assert_no_panic("i_structure_UTF-8_BOM_empty_object.json");
 }
-

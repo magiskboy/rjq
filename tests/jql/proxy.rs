@@ -4,7 +4,9 @@ use crate::jql::fixture::{at, sample};
 use crate::json::value::JsonValue;
 
 fn proxy_get(data: &JsonValue<'_>, ref_str: &str) -> Result<JsonValue<'static>, JqlError> {
-    Proxy::new(data).get(ref_str).map(|p| p.data().clone().into_owned())
+    Proxy::new(data)
+        .get(ref_str)
+        .map(|p| p.data().clone().into_owned())
 }
 
 fn assert_get(data: &JsonValue<'_>, ref_str: &str, expected: JsonValue<'static>) {
@@ -22,16 +24,14 @@ fn assert_get_err(data: &JsonValue<'_>, ref_str: &str) {
 
 fn project_keys(value: &JsonValue<'_>, keys: &[&str]) -> JsonValue<'static> {
     match value {
-        JsonValue::Object(map) => JsonValue::object(
-            keys.iter().filter_map(|k| {
-                map.get(*k).map(|v| {
-                    (
-                        std::borrow::Cow::Owned((*k).to_string()),
-                        v.clone().into_owned(),
-                    )
-                })
-            }),
-        ),
+        JsonValue::Object(map) => JsonValue::object(keys.iter().filter_map(|k| {
+            map.get(*k).map(|v| {
+                (
+                    std::borrow::Cow::Owned((*k).to_string()),
+                    v.clone().into_owned(),
+                )
+            })
+        })),
         JsonValue::Array(items) => {
             JsonValue::array(items.iter().map(|item| project_keys(item, keys)).collect())
         }

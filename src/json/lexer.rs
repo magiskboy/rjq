@@ -32,10 +32,7 @@ pub(crate) fn is_structural(b: u8) -> bool {
 /// (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`).
 #[inline]
 fn is_escape_byte(b: u8) -> bool {
-    matches!(
-        b,
-        b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't'
-    )
+    matches!(b, b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't')
 }
 
 #[derive(Debug)]
@@ -340,10 +337,9 @@ impl<'a> Lexer<'a> {
                 let starts_u = matches!(self.peek_bytes(2), Some(b) if b[1] == b'u');
                 if starts_u {
                     let end = (esc_pos + 6).min(self.source.buffered_end().max(esc_pos + 2));
-                    return Err(self.error_at(
-                        JsonErrorKind::InvalidUnicodeEscape,
-                        Span { start, end },
-                    ));
+                    return Err(
+                        self.error_at(JsonErrorKind::InvalidUnicodeEscape, Span { start, end })
+                    );
                 }
 
                 let end = (esc_pos + 2).min(self.source.buffered_end().max(esc_pos + 1));
@@ -389,7 +385,6 @@ impl<'a> Lexer<'a> {
         }
     }
 }
-
 
 #[cfg(test)]
 #[path = "../../tests/json/lexer.rs"]
