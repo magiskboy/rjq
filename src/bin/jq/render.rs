@@ -65,13 +65,15 @@ impl Theme {
 /// environment. Otherwise the scheme is loaded from [`crate::color::COLORS_ENV`]
 /// (or the default) and adapted to the detected [`ColorLevel`].
 pub fn print_value(value: &JsonValue<'_>, no_color: bool) -> io::Result<()> {
-    let level = if no_color {
-        ColorLevel::None
-    } else {
-        ColorLevel::detect()
-    };
-    let scheme = ColorScheme::from_env();
     let mut stdout = io::stdout().lock();
+
+    if no_color {
+        write!(stdout, "{}", value)?;
+        return Ok(());
+    }
+
+    let level = ColorLevel::detect();
+    let scheme = ColorScheme::from_env();
     render_value(&mut stdout, value, level, &scheme)?;
     writeln!(stdout)?;
     Ok(())

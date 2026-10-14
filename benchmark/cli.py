@@ -190,7 +190,7 @@ def main() -> int:
     for case, rjq_script, jq_script in CASES:
         print(f"==> {case}", file=sys.stderr)
         rjq_walls = bench(
-            [str(rjq), "--input", str(fixture), "--script", rjq_script],
+            [str(rjq), "--input", str(fixture), "--script", rjq_script, "--no-color"],
             warmup=args.warmup,
             runs=args.runs,
         )
