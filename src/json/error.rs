@@ -10,14 +10,46 @@ use crate::{Location, Span};
 pub enum ExpectedSyntax {
     Value,
     Token(JsonTokenKind),
+    /// Structural punctuation expected as a raw byte (`{}[]:,`).
+    Byte(u8),
 }
 
 impl ExpectedSyntax {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> Cow<'static, str> {
         match self {
-            Self::Value => "value",
-            Self::Token(kind) => kind.syntax_name(),
+            Self::Value => Cow::Borrowed("value"),
+            Self::Token(kind) => Cow::Borrowed(kind.syntax_name()),
+            Self::Byte(b) => Cow::Borrowed(byte_syntax_name(*b)),
         }
+    }
+}
+
+/// What the parser actually observed when a syntax expectation failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FoundSyntax {
+    Token(JsonTokenKind),
+    Byte(u8),
+}
+
+impl FoundSyntax {
+    fn name(&self) -> Cow<'static, str> {
+        match self {
+            Self::Token(kind) => Cow::Borrowed(kind.syntax_name()),
+            Self::Byte(b) => Cow::Borrowed(byte_syntax_name(*b)),
+        }
+    }
+}
+
+pub(crate) fn byte_syntax_name(b: u8) -> &'static str {
+    match b {
+        b'{' => "'{'",
+        b'}' => "'}'",
+        b'[' => "'['",
+        b']' => "']'",
+        b':' => "':'",
+        b',' => "','",
+        b'"' => "'\"'",
+        _ => "byte",
     }
 }
 
@@ -80,7 +112,7 @@ pub enum JsonErrorKind {
     EmptyInput,
     UnexpectedToken {
         expected: ExpectedSyntax,
-        found: JsonTokenKind,
+        found: FoundSyntax,
     },
     UnexpectedEof {
         expected: ExpectedSyntax,
@@ -146,7 +178,7 @@ impl JsonErrorKind {
             Self::UnexpectedToken { expected, found } => Cow::Owned(format!(
                 "expected {} but found {}",
                 expected.name(),
-                found.syntax_name(),
+                found.name(),
             )),
             Self::UnexpectedEof { expected } => Cow::Owned(format!(
                 "expected {} but reached end of input",

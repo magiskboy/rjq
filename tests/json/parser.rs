@@ -1,9 +1,8 @@
 use crate::Span;
 use crate::json::{
     JsonValue,
-    error::{ExpectedSyntax, JsonError, JsonErrorKind},
+    error::{ExpectedSyntax, FoundSyntax, JsonError, JsonErrorKind},
     parser::JsonParser,
-    token::JsonTokenKind,
 };
 use std::borrow::Cow;
 
@@ -402,7 +401,7 @@ fn parse_errors_carry_kind_and_span() {
     assert_eq!(
         err.kind,
         JsonErrorKind::UnexpectedEof {
-            expected: ExpectedSyntax::Token(JsonTokenKind::RBrace),
+            expected: ExpectedSyntax::Byte(b'}'),
         }
     );
     assert_eq!(err.span, Some(Span { start: 1, end: 1 }));
@@ -423,8 +422,8 @@ fn parse_errors_carry_kind_and_span() {
     assert_eq!(
         err.kind,
         JsonErrorKind::UnexpectedToken {
-            expected: ExpectedSyntax::Token(JsonTokenKind::RBracket),
-            found: JsonTokenKind::RBrace,
+            expected: ExpectedSyntax::Byte(b']'),
+            found: FoundSyntax::Byte(b'}'),
         }
     );
     assert_eq!(err.span, Some(Span { start: 2, end: 3 }));
@@ -438,7 +437,7 @@ fn parse_errors_carry_kind_and_span() {
         err.kind,
         JsonErrorKind::UnexpectedToken {
             expected: ExpectedSyntax::Value,
-            found: JsonTokenKind::RBrace,
+            found: FoundSyntax::Byte(b'}'),
         }
     );
 

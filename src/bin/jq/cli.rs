@@ -79,10 +79,8 @@ pub fn execute() -> Result<(), AppError> {
 
     let reader = load_input(&opts.input)?;
     let value = process(reader, &opts)?;
-    render::print_value(&value, opts.no_color).map_err(|source| AppError::Io {
-        path: None,
-        source,
-    })?;
+    render::print_value(&value, opts.no_color)
+        .map_err(|source| AppError::Io { path: None, source })?;
 
     Ok(())
 }

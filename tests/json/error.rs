@@ -1,4 +1,4 @@
-use super::{ExpectedJsonType, ExpectedSyntax, JsonError, JsonErrorKind, JsonType};
+use super::{ExpectedJsonType, ExpectedSyntax, FoundSyntax, JsonError, JsonErrorKind, JsonType};
 use crate::Span;
 use crate::json::token::JsonTokenKind;
 
@@ -49,8 +49,8 @@ fn display_uses_one_sentence_per_kind() {
         (
             err(
                 JsonErrorKind::UnexpectedToken {
-                    expected: ExpectedSyntax::Token(JsonTokenKind::Colon),
-                    found: JsonTokenKind::Number,
+                    expected: ExpectedSyntax::Byte(b':'),
+                    found: FoundSyntax::Token(JsonTokenKind::Number),
                 },
                 3,
                 4,
@@ -61,7 +61,7 @@ fn display_uses_one_sentence_per_kind() {
             err(
                 JsonErrorKind::UnexpectedToken {
                     expected: ExpectedSyntax::Value,
-                    found: JsonTokenKind::Comma,
+                    found: FoundSyntax::Byte(b','),
                 },
                 2,
                 3,
@@ -71,7 +71,7 @@ fn display_uses_one_sentence_per_kind() {
         (
             err(
                 JsonErrorKind::UnexpectedEof {
-                    expected: ExpectedSyntax::Token(JsonTokenKind::RBrace),
+                    expected: ExpectedSyntax::Byte(b'}'),
                 },
                 1,
                 1,
