@@ -59,22 +59,17 @@ exponent   = ( "e" | "E" ) [ "+" | "-" ] digits ;
 string     = '"' { key_char } '"' ;
 key_char   = (* any character except '"' *) ;
 
-(* Access path is one token starting with '.'. Whitespace is " " only. *)
-access     = "." [ path ] ;
+(* Access is parsed as structured steps (not one opaque token).
+   Path tokens must be adjacent — no whitespace inside a chain. *)
+access     = "." { step } ;                    (* "." alone → identity *)
 
-(* ── Access path (after the leading '.') ───────────────────────────── *)
-
-path       = head { cont } ;
-
-head       = prop [ projection ]
-           | index [ projection ]
-           | projection ;                      (* .{a,b} *)
-
-(* After `}` only `.…` may follow; after prop/index, `.` / `[` / `{` ok. *)
-cont       = "." prop [ projection ]
-           | index [ projection ]
+step       = prop
+           | index
            | projection
+           | "." prop
            | "." projection ;
+
+(* After a non-empty projection, only `.…` may continue. *)
 
 prop       = prop_ident | string ;
 prop_ident = ( letter | "_" ) { letter | digit | "_" } ;

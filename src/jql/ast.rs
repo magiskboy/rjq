@@ -71,13 +71,29 @@ pub struct ObjectField<'a> {
     pub value: Box<JqlAstNode<'a>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArrayIndex {
+    Range { start: usize, end: usize },
+    Index(usize),
+    MultipleIndex(Vec<usize>),
+    All,
+}
+
+/// One step in an access path. Identity `.` is an empty step list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccessStep<'a> {
+    Property(&'a str),
+    Index(ArrayIndex),
+    Project(Vec<&'a str>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum JqlAstNode<'a> {
     LParen,
     RParen,
 
     // Operator nodes
-    Access(&'a str),
+    Access(Vec<AccessStep<'a>>),
     Pipe {
         source: Box<JqlAstNode<'a>>,
         dest: Box<JqlAstNode<'a>>,
@@ -183,10 +199,8 @@ impl<'a> JqlAstNode<'a> {
         }
     }
 
-    pub fn identifier(token: &JqlToken, source: &'a str) -> Result<JqlAstNode<'a>, JqlError> {
-        Ok(JqlAstNode::Access(
-            source.get(token.span.start..token.span.end).unwrap(),
-        ))
+    pub fn access(steps: Vec<AccessStep<'a>>) -> JqlAstNode<'a> {
+        JqlAstNode::Access(steps)
     }
 
     pub fn number(token: &JqlToken, source: &'a str) -> Result<JqlAstNode<'a>, JqlError> {

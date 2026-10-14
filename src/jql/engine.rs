@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 use crate::{
     jql::{
-        ast::{JqlAstNode, JqlBinaryKind, JqlNumericKind, ObjectField, ObjectKey},
+        ast::{AccessStep, JqlAstNode, JqlBinaryKind, JqlNumericKind, ObjectField, ObjectKey},
         error::{JqlError, JqlErrorKind},
         proxy::{Proxy, ValueRef},
     },
@@ -22,7 +22,7 @@ impl Engine {
             | JqlAstNode::Boolean(_)
             | JqlAstNode::Number(_)
             | JqlAstNode::String(_) => Ok(Self::literal(path)),
-            JqlAstNode::Access(path) => Self::access(value, path),
+            JqlAstNode::Access(steps) => Self::access(value, steps),
             JqlAstNode::Pipe { source, dest } => Self::pipe(value, source, dest),
             JqlAstNode::Call { name, args } => Self::call(name, args, value),
             JqlAstNode::Numeric { kind, left, right } => Self::numeric(kind, left, right, value),
@@ -42,8 +42,8 @@ impl Engine {
         }
     }
 
-    fn access<'a>(value: Proxy<'a>, path: &str) -> Result<Proxy<'a>, JqlError> {
-        value.get(path)
+    fn access<'a>(value: Proxy<'a>, steps: &[AccessStep<'_>]) -> Result<Proxy<'a>, JqlError> {
+        value.get_steps(steps)
     }
 
     fn pipe<'a>(

@@ -21,8 +21,11 @@ enum JqlLexerState {
     InRBrace,
     InLeftBrace,
     InRightBrace,
+    InLBracket,
+    InRBracket,
     InColon,
     InComma,
+    InDot,
     InPipe,
 
     // Literals: false / true / null (prefix states)
@@ -49,14 +52,8 @@ enum JqlLexerState {
     InString,
     CloseString,
 
-    // Identifiers & paths
+    // Identifiers
     InIdentifier,
-    InPathIdentifier,
-    InPathInString,
-    InPathInBracket,
-    InPathInBracketString,
-    InPathInBrace,
-    InPathInBraceString,
 
     // Operators
     StartEqual,
@@ -133,11 +130,13 @@ impl<'a> JqlLexer<'a> {
                 ')' => JqlLexerState::InRBrace,
                 '{' => JqlLexerState::InLeftBrace,
                 '}' => JqlLexerState::InRightBrace,
+                '[' => JqlLexerState::InLBracket,
+                ']' => JqlLexerState::InRBracket,
                 ':' => JqlLexerState::InColon,
                 ',' => JqlLexerState::InComma,
                 '0'..='9' => JqlLexerState::InNumber,
-                '.' => JqlLexerState::InPathIdentifier,
-                'a'..='z' | 'A'..='Z' => JqlLexerState::InIdentifier,
+                '.' => JqlLexerState::InDot,
+                'a'..='z' | 'A'..='Z' | '_' => JqlLexerState::InIdentifier,
                 ' ' => JqlLexerState::Whitespace,
                 _ => JqlLexerState::InvalidToken,
             },
@@ -199,37 +198,6 @@ impl<'a> JqlLexer<'a> {
                 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => JqlLexerState::InIdentifier,
                 _ => JqlLexerState::InvalidToken,
             },
-            JqlLexerState::InPathIdentifier => match c {
-                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '.' => JqlLexerState::InPathIdentifier,
-                '"' => JqlLexerState::InPathInString,
-                '[' => JqlLexerState::InPathInBracket,
-                '{' => JqlLexerState::InPathInBrace,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InPathInString => match c {
-                '"' => JqlLexerState::InPathIdentifier,
-                _ => JqlLexerState::InPathInString,
-            },
-            JqlLexerState::InPathInBracket => match c {
-                '0'..='9' | ':' | ',' => JqlLexerState::InPathInBracket,
-                '"' => JqlLexerState::InPathInBracketString,
-                ']' => JqlLexerState::InPathIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InPathInBracketString => match c {
-                '"' => JqlLexerState::InPathInBracket,
-                _ => JqlLexerState::InPathInBracketString,
-            },
-            JqlLexerState::InPathInBrace => match c {
-                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | ',' => JqlLexerState::InPathInBrace,
-                '"' => JqlLexerState::InPathInBraceString,
-                '}' => JqlLexerState::InPathIdentifier,
-                _ => JqlLexerState::InvalidToken,
-            },
-            JqlLexerState::InPathInBraceString => match c {
-                '"' => JqlLexerState::InPathInBrace,
-                _ => JqlLexerState::InPathInBraceString,
-            },
 
             JqlLexerState::StartEqual => match c {
                 '=' => JqlLexerState::InEqual,
@@ -268,7 +236,7 @@ impl<'a> JqlLexer<'a> {
 
     fn accept_state(&self, state: &JqlLexerState, start: usize, end: usize) -> Option<JqlToken> {
         let kind = match state {
-            // Incomplete keyword prefixes: accept as identifier only at EOF.
+            // Incomplete keyword prefixes are bare identifiers (`f`, `n`, `tru`, …).
             JqlLexerState::InF
             | JqlLexerState::InFa
             | JqlLexerState::InFal
@@ -279,18 +247,18 @@ impl<'a> JqlLexer<'a> {
             | JqlLexerState::InN
             | JqlLexerState::InNu
             | JqlLexerState::InNul => {
-                if end == self.source.len() {
-                    return Some(JqlToken::new(JqlTokenKind::Identifier, start, end));
-                }
-                return None;
+                return Some(JqlToken::new(JqlTokenKind::Identifier, start, end));
             }
 
             JqlLexerState::InLBrace => JqlTokenKind::LParen,
             JqlLexerState::InRBrace => JqlTokenKind::RParen,
             JqlLexerState::InLeftBrace => JqlTokenKind::LBrace,
             JqlLexerState::InRightBrace => JqlTokenKind::RBrace,
+            JqlLexerState::InLBracket => JqlTokenKind::LBracket,
+            JqlLexerState::InRBracket => JqlTokenKind::RBracket,
             JqlLexerState::InColon => JqlTokenKind::Colon,
             JqlLexerState::InComma => JqlTokenKind::Comma,
+            JqlLexerState::InDot => JqlTokenKind::Dot,
             JqlLexerState::InPipe => JqlTokenKind::Pipe,
             JqlLexerState::InFalse | JqlLexerState::InTrue => JqlTokenKind::Boolean,
             JqlLexerState::InNull => JqlTokenKind::Null,
@@ -298,13 +266,7 @@ impl<'a> JqlLexer<'a> {
             | JqlLexerState::InNumberFrac
             | JqlLexerState::InNumberExpDigit => JqlTokenKind::Number,
             JqlLexerState::CloseString => JqlTokenKind::String,
-            JqlLexerState::InIdentifier
-            | JqlLexerState::InPathIdentifier
-            | JqlLexerState::InPathInString
-            | JqlLexerState::InPathInBracket
-            | JqlLexerState::InPathInBracketString
-            | JqlLexerState::InPathInBrace
-            | JqlLexerState::InPathInBraceString => JqlTokenKind::Identifier,
+            JqlLexerState::InIdentifier => JqlTokenKind::Identifier,
             JqlLexerState::InEqual => JqlTokenKind::EqualOp,
             JqlLexerState::InNotEqual => JqlTokenKind::NotEqualOp,
             JqlLexerState::InGreater => JqlTokenKind::GreaterOp,

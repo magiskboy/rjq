@@ -70,27 +70,26 @@ fn access_array_index() {
 }
 
 #[test]
-fn access_nested_array_via_dotted_index() {
-    // Nested indexing uses empty-name property: .a[i].[j]
+fn access_nested_array_index() {
     let data = sample();
-    assert_ok(&data, ".matrix[0].[1]", JsonValue::number(2.0));
-    assert_ok(&data, ".matrix[1].[0]", JsonValue::number(4.0));
-    assert_ok(&data, ".matrix[2].[2]", JsonValue::number(9.0));
-    assert_ok(&data, ".nested[1].[0]", JsonValue::number(2.0));
+    assert_ok(&data, ".matrix[0][1]", JsonValue::number(2.0));
+    assert_ok(&data, ".matrix[1][0]", JsonValue::number(4.0));
+    assert_ok(&data, ".matrix[2][2]", JsonValue::number(9.0));
+    assert_ok(&data, ".nested[1][0]", JsonValue::number(2.0));
 }
 
 #[test]
-fn access_deeply_nested_array_via_dotted_index() {
+fn access_deeply_nested_array_index() {
     let data = sample();
-    assert_ok(&data, ".nested[1].[1].[0]", JsonValue::number(3.0));
+    assert_ok(&data, ".nested[1][1][0]", JsonValue::number(3.0));
     assert_ok(
         &data,
-        ".matrix[0].[1:3]",
+        ".matrix[0][1:3]",
         JsonValue::array(vec![JsonValue::number(2.0), JsonValue::number(3.0)]),
     );
     assert_ok(
         &data,
-        ".matrix[1].[0,2]",
+        ".matrix[1][0,2]",
         JsonValue::array(vec![JsonValue::number(4.0), JsonValue::number(6.0)]),
     );
     assert_ok(
@@ -106,11 +105,11 @@ fn access_deeply_nested_array_via_dotted_index() {
 }
 
 #[test]
-fn access_root_nested_array_via_dotted_index() {
+fn access_root_nested_array_index() {
     let data = at(".matrix");
-    assert_ok(&data, ".[0].[1]", JsonValue::number(2.0));
-    assert_ok(&data, ".[1].[0]", JsonValue::number(4.0));
-    assert_ok(&data, ".[2].[1]", JsonValue::number(8.0));
+    assert_ok(&data, ".[0][1]", JsonValue::number(2.0));
+    assert_ok(&data, ".[1][0]", JsonValue::number(4.0));
+    assert_ok(&data, ".[2][1]", JsonValue::number(8.0));
 }
 
 #[test]
@@ -118,10 +117,10 @@ fn access_nested_array_then_property() {
     let data = sample();
     assert_ok(
         &data,
-        ".rows[0].[0].name",
+        ".rows[0][0].name",
         JsonValue::string("a".to_string()),
     );
-    assert_ok(&data, ".rows[1].[0].value", JsonValue::number(2.0));
+    assert_ok(&data, ".rows[1][0].value", JsonValue::number(2.0));
     assert_ok(
         &data,
         ".company.teams[0].name",
@@ -267,8 +266,8 @@ fn compares_numbers_from_literals_and_fields() {
             (".count <= 42", true),
             (".count >= 43", false),
             (".count <= 41", false),
-            (".matrix[0].[0] < .matrix[0].[1]", true),
-            (".matrix[1].[0] > .matrix[0].[2]", true),
+            (".matrix[0][0] < .matrix[0][1]", true),
+            (".matrix[1][0] > .matrix[0][2]", true),
             (".scalars.negative < .scalars.zero", true),
             (".scalars.fraction > 10", true),
             (".jobs[0].money > .jobs[1].money", true),
@@ -441,7 +440,7 @@ fn filter_composes_with_selection_and_pipes() {
     );
     assert_ok(
         &data,
-        ".matrix | filter(.[0] > 3) | .[0].[1]",
+        ".matrix | filter(.[0] > 3) | .[0][1]",
         JsonValue::number(5.0),
     );
 }
@@ -618,5 +617,5 @@ fn binary_ops_evaluate_both_operands() {
 fn invalid_access_path_fails() {
     let data = sample();
     assert_err(&data, ".jobs[");
-    assert_err(&data, ".matrix[0].[");
+    assert_err(&data, ".matrix[0][");
 }

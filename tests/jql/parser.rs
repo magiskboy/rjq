@@ -1,7 +1,8 @@
 use crate::Span;
 use crate::jql::{
-    ast::{JqlAstNode, JqlBinaryKind, ObjectField, ObjectKey},
+    ast::{AccessStep, ArrayIndex, JqlAstNode, JqlBinaryKind, ObjectField, ObjectKey},
     error::{JqlError, JqlErrorKind},
+    lexer::JqlLexer,
     parser::JqlParser,
     token::{JqlToken, JqlTokenKind},
 };
@@ -21,12 +22,21 @@ fn tokens(source: &str, parts: &[(JqlTokenKind, &str)]) -> Vec<JqlToken> {
     out
 }
 
-fn parse<'a>(source: &'a str, parts: &[(JqlTokenKind, &str)]) -> Result<JqlAstNode<'a>, JqlError> {
-    JqlParser::parse(&tokens(source, parts), source)
+fn parse<'a>(source: &'a str, _parts: &[(JqlTokenKind, &str)]) -> Result<JqlAstNode<'a>, JqlError> {
+    let tokens = JqlLexer::tokenize(source)?;
+    JqlParser::parse(&tokens, source)
 }
 
-fn access(path: &str) -> JqlAstNode<'_> {
-    JqlAstNode::Access(path)
+fn access(steps: Vec<AccessStep<'_>>) -> JqlAstNode<'_> {
+    JqlAstNode::Access(steps)
+}
+
+fn prop(name: &str) -> AccessStep<'_> {
+    AccessStep::Property(name)
+}
+
+fn index(i: ArrayIndex) -> AccessStep<'static> {
+    AccessStep::Index(i)
 }
 
 fn number(n: f64) -> JqlAstNode<'static> {
@@ -100,15 +110,12 @@ fn literals() {
         Ok(number(100.0))
     );
     assert_eq!(
-        parse(".[\"x-y\"]", &[(JqlTokenKind::Identifier, ".[\"x-y\"]")]),
-        Ok(access(".[\"x-y\"]"))
+        parse(".[\"x-y\"]", &[]),
+        Ok(access(vec![prop("x-y")]))
     );
     assert_eq!(
-        parse(
-            ".\"kebab-case\"",
-            &[(JqlTokenKind::Identifier, ".\"kebab-case\"")]
-        ),
-        Ok(access(".\"kebab-case\""))
+        parse(".\"kebab-case\"", &[]),
+        Ok(access(vec![prop("kebab-case")]))
     );
     assert_eq!(
         parse("\"hi\"", &[(JqlTokenKind::String, "\"hi\"")]),
@@ -120,11 +127,11 @@ fn literals() {
     );
     assert_eq!(
         parse(".id", &[(JqlTokenKind::Identifier, ".id")]),
-        Ok(access(".id"))
+        Ok(access(vec![prop("id")]))
     );
     assert_eq!(
         parse(".[1]", &[(JqlTokenKind::Identifier, ".[1]")]),
-        Ok(access(".[1]"))
+        Ok(access(vec![index(ArrayIndex::Index(1))]))
     );
     assert_eq!(
         parse("foo", &[(JqlTokenKind::Identifier, "foo")]),
@@ -264,7 +271,7 @@ fn pipe_operator() {
                 (JqlTokenKind::Identifier, ".b"),
             ],
         ),
-        Ok(pipe(access(".a"), access(".b")))
+        Ok(pipe(access(vec![prop("a")]), access(vec![prop("b")])))
     );
 }
 
@@ -284,7 +291,7 @@ fn function_calls() {
         ),
         Ok(call(
             "filter",
-            vec![binary(JqlBinaryKind::Greater, access(".id"), number(10.0))],
+            vec![binary(JqlBinaryKind::Greater, access(vec![prop("id")]), number(10.0))],
         ))
     );
     assert_eq!(
@@ -420,7 +427,7 @@ fn operators_are_right_associative() {
                 (JqlTokenKind::Identifier, ".c"),
             ],
         ),
-        Ok(pipe(access(".a"), pipe(access(".b"), access(".c"))))
+        Ok(pipe(access(vec![prop("a")]), pipe(access(vec![prop("b")]), access(vec![prop("c")]))))
     );
 }
 
@@ -561,22 +568,22 @@ fn readme_pipeline() {
 
     let money_or_gold = binary(
         JqlBinaryKind::Or,
-        binary(JqlBinaryKind::Greater, access(".money"), number(10.0)),
-        binary(JqlBinaryKind::GreaterEqual, access(".gold"), number(1.0)),
+        binary(JqlBinaryKind::Greater, access(vec![prop("money")]), number(10.0)),
+        binary(JqlBinaryKind::GreaterEqual, access(vec![prop("gold")]), number(1.0)),
     );
     let predicate = binary(
         JqlBinaryKind::And,
-        binary(JqlBinaryKind::Greater, access(".id"), number(10.0)),
+        binary(JqlBinaryKind::Greater, access(vec![prop("id")]), number(10.0)),
         binary(
             JqlBinaryKind::And,
-            binary(JqlBinaryKind::Less, access(".age"), number(20.0)),
+            binary(JqlBinaryKind::Less, access(vec![prop("age")]), number(20.0)),
             money_or_gold,
         ),
     );
 
     assert_eq!(
         parse(source, &parts),
-        Ok(pipe(access(".[1]"), call("filter", vec![predicate])))
+        Ok(pipe(access(vec![index(ArrayIndex::Index(1))]), call("filter", vec![predicate])))
     );
 }
 
@@ -600,7 +607,7 @@ fn object_construct() {
                 (JqlTokenKind::RBrace, "}"),
             ]
         ),
-        Ok(object(vec![("name", access(".title"))]))
+        Ok(object(vec![("name", access(vec![prop("title")]))]))
     );
     assert_eq!(
         parse(
@@ -618,8 +625,8 @@ fn object_construct() {
             ]
         ),
         Ok(object(vec![
-            ("name", access(".title")),
-            ("pay", access(".money")),
+            ("name", access(vec![prop("title")])),
+            ("pay", access(vec![prop("money")])),
         ]))
     );
 }
@@ -648,8 +655,8 @@ fn map_call_with_object_construct() {
         Ok(call(
             "map",
             vec![object(vec![
-                ("name", access(".title")),
-                ("pay", access(".money")),
+                ("name", access(vec![prop("title")])),
+                ("pay", access(vec![prop("money")])),
             ])]
         ))
     );

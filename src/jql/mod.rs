@@ -12,7 +12,6 @@ pub mod error;
 pub(crate) mod lexer;
 pub(crate) mod parser;
 pub(crate) mod proxy;
-pub(crate) mod reference;
 pub(crate) mod token;
 
 pub fn jql_parse<'a>(source: &'a str) -> Result<JqlAstNode<'a>, JqlError> {
@@ -30,6 +29,10 @@ pub fn jql_execute<'a>(value: &'a JsonValue<'a>, query: &str) -> Result<JsonValu
 #[cfg(test)]
 #[path = "../../tests/jql/fixture.rs"]
 pub(crate) mod fixture;
+
+#[cfg(test)]
+#[path = "../../tests/jql/access.rs"]
+mod access_tests;
 
 #[cfg(test)]
 #[path = "../../tests/jql/e2e.rs"]

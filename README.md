@@ -94,7 +94,7 @@ Queries below run against the fixture `src/jql/sample.json`.
 .company.teams | filter(.size > 5) | .[0].name
 .jobs[0,3] | filter(.active == true) | .[1].title
 .people | filter(.vip == true) | .[0].name
-.matrix | filter(.[0] > 3) | .[0].[1]
+.matrix | filter(.[0] > 3) | .[0][1]
 .jobs | filter(.active == true) | map(.title)
 ```
 

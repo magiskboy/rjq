@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use crate::Span;
 use crate::jql::ast::JqlNumericKind;
 use crate::jql::{
-    ast::{JqlAstNode, JqlBinaryKind, ObjectField},
+    ast::{AccessStep, ArrayIndex, JqlAstNode, JqlBinaryKind, ObjectField},
     error::{ExpectedSyntax, JqlError, JqlErrorKind},
     token::{JqlToken, JqlTokenKind},
 };
@@ -163,6 +163,370 @@ impl JqlParser {
         JqlAstNode::object(fields)
     }
 
+    fn slice<'a>(token: &JqlToken, source: &'a str) -> &'a str {
+        source.get(token.span.start..token.span.end).unwrap()
+    }
+
+    fn string_content<'a>(token: &JqlToken, source: &'a str) -> &'a str {
+        source
+            .get(token.span.start + 1..token.span.end - 1)
+            .unwrap()
+    }
+
+    fn adjacent(prev_end: usize, token: &JqlToken) -> bool {
+        token.span.start == prev_end
+    }
+
+    fn parse_usize_index(token: &JqlToken, source: &str) -> Result<usize, JqlError> {
+        let raw = Self::slice(token, source);
+        if raw.contains('.') || raw.contains('e') || raw.contains('E') || raw.starts_with('-') {
+            return Err(Self::unexpected_token(
+                ExpectedSyntax::Token(JqlTokenKind::Number),
+                token.kind,
+                token.span,
+                source,
+            ));
+        }
+        raw.parse::<usize>().map_err(|_| {
+            Self::unexpected_token(
+                ExpectedSyntax::Token(JqlTokenKind::Number),
+                token.kind,
+                token.span,
+                source,
+            )
+        })
+    }
+
+    fn parse_proj_key<'a>(
+        token: &JqlToken,
+        source: &'a str,
+    ) -> Result<&'a str, JqlError> {
+        match token.kind {
+            JqlTokenKind::Identifier => Ok(Self::slice(token, source)),
+            JqlTokenKind::String => Ok(Self::string_content(token, source)),
+            JqlTokenKind::Number => {
+                let raw = Self::slice(token, source);
+                if raw.contains('.') || raw.contains('e') || raw.contains('E') || raw.starts_with('-')
+                {
+                    return Err(Self::unexpected_token(
+                        ExpectedSyntax::Token(JqlTokenKind::Identifier),
+                        token.kind,
+                        token.span,
+                        source,
+                    ));
+                }
+                Ok(raw)
+            }
+            other => Err(Self::unexpected_token(
+                ExpectedSyntax::Token(JqlTokenKind::Identifier),
+                other,
+                token.span,
+                source,
+            )),
+        }
+    }
+
+    fn parse_projection<'a>(
+        tokens: &[JqlToken],
+        idx: usize,
+        source: &'a str,
+    ) -> Result<(Option<AccessStep<'a>>, usize), JqlError> {
+        // tokens[idx] is LBrace
+        let open = tokens[idx];
+        let Some(end) = Self::find_matching_close(
+            tokens,
+            idx + 1,
+            JqlTokenKind::LBrace,
+            JqlTokenKind::RBrace,
+            1,
+        ) else {
+            return Err(JqlError::new(
+                JqlErrorKind::UnclosedBrace,
+                open.span,
+                source,
+            ));
+        };
+
+        let inner = &tokens[idx + 1..end];
+        if inner.is_empty() {
+            // `{}` is a no-op projection (same as PropertySelection::All before).
+            return Ok((None, end + 1));
+        }
+
+        let mut keys = Vec::new();
+        let mut i = 0;
+        while i < inner.len() {
+            keys.push(Self::parse_proj_key(&inner[i], source)?);
+            i += 1;
+            if i >= inner.len() {
+                break;
+            }
+            if inner[i].kind != JqlTokenKind::Comma {
+                return Err(Self::unexpected_token(
+                    ExpectedSyntax::Token(JqlTokenKind::Comma),
+                    inner[i].kind,
+                    inner[i].span,
+                    source,
+                ));
+            }
+            i += 1;
+            if i >= inner.len() {
+                return Err(JqlError::new(
+                    JqlErrorKind::InvalidExpression,
+                    inner[i - 1].span,
+                    source,
+                ));
+            }
+        }
+
+        Ok((Some(AccessStep::Project(keys)), end + 1))
+    }
+
+    fn parse_index_body<'a>(
+        tokens: &[JqlToken],
+        source: &'a str,
+        open: JqlToken,
+    ) -> Result<AccessStep<'a>, JqlError> {
+        if tokens.is_empty() {
+            return Ok(AccessStep::Index(ArrayIndex::All));
+        }
+
+        if tokens.len() == 1 && tokens[0].kind == JqlTokenKind::String {
+            return Ok(AccessStep::Property(Self::string_content(&tokens[0], source)));
+        }
+
+        if tokens.len() == 1 && tokens[0].kind == JqlTokenKind::Number {
+            return Ok(AccessStep::Index(ArrayIndex::Index(Self::parse_usize_index(
+                &tokens[0], source,
+            )?)));
+        }
+
+        if tokens.len() == 3
+            && tokens[0].kind == JqlTokenKind::Number
+            && tokens[1].kind == JqlTokenKind::Colon
+            && tokens[2].kind == JqlTokenKind::Number
+        {
+            let start = Self::parse_usize_index(&tokens[0], source)?;
+            let end = Self::parse_usize_index(&tokens[2], source)?;
+            return Ok(AccessStep::Index(ArrayIndex::Range { start, end }));
+        }
+
+        // Multi-index: number ("," number)+
+        if tokens.len() >= 3 && tokens.len() % 2 == 1 {
+            let mut indices = Vec::new();
+            let mut i = 0;
+            while i < tokens.len() {
+                if tokens[i].kind != JqlTokenKind::Number {
+                    break;
+                }
+                indices.push(Self::parse_usize_index(&tokens[i], source)?);
+                i += 1;
+                if i >= tokens.len() {
+                    return Ok(AccessStep::Index(ArrayIndex::MultipleIndex(indices)));
+                }
+                if tokens[i].kind != JqlTokenKind::Comma {
+                    break;
+                }
+                i += 1;
+                if i >= tokens.len() {
+                    return Err(JqlError::new(
+                        JqlErrorKind::InvalidExpression,
+                        tokens[i - 1].span,
+                        source,
+                    ));
+                }
+            }
+            if i == tokens.len() && indices.len() >= 2 {
+                return Ok(AccessStep::Index(ArrayIndex::MultipleIndex(indices)));
+            }
+        }
+
+        Err(JqlError::new(
+            JqlErrorKind::InvalidExpression,
+            open.span,
+            source,
+        ))
+    }
+
+    fn parse_index_step<'a>(
+        tokens: &[JqlToken],
+        idx: usize,
+        source: &'a str,
+    ) -> Result<(AccessStep<'a>, usize), JqlError> {
+        let open = tokens[idx];
+        let Some(end) = Self::find_matching_close(
+            tokens,
+            idx + 1,
+            JqlTokenKind::LBracket,
+            JqlTokenKind::RBracket,
+            1,
+        ) else {
+            return Err(Self::unexpected_token(
+                ExpectedSyntax::Token(JqlTokenKind::RBracket),
+                JqlTokenKind::Stop,
+                open.span,
+                source,
+            ));
+        };
+        let step = Self::parse_index_body(&tokens[idx + 1..end], source, open)?;
+        Ok((step, end + 1))
+    }
+
+    /// Parse an access starting at `tokens[idx]` (`Dot`). Returns the node and next index.
+    /// Steps must be lexically adjacent (no whitespace between path tokens).
+    fn parse_access<'a>(
+        tokens: &[JqlToken],
+        idx: usize,
+        source: &'a str,
+    ) -> Result<(JqlAstNode<'a>, usize), JqlError> {
+        debug_assert_eq!(tokens[idx].kind, JqlTokenKind::Dot);
+        let mut steps = Vec::new();
+        let mut i = idx + 1;
+        let mut cursor = tokens[idx].span.end;
+        let mut after_project = false;
+
+        while i < tokens.len() {
+            let token = tokens[i];
+            if !Self::adjacent(cursor, &token) {
+                break;
+            }
+
+            if after_project {
+                if token.kind != JqlTokenKind::Dot {
+                    break;
+                }
+                i += 1;
+                cursor = token.span.end;
+                let Some(next) = tokens.get(i) else {
+                    return Err(JqlError::new(
+                        JqlErrorKind::InvalidExpression,
+                        token.span,
+                        source,
+                    ));
+                };
+                if !Self::adjacent(cursor, next) {
+                    return Err(JqlError::new(
+                        JqlErrorKind::InvalidExpression,
+                        token.span,
+                        source,
+                    ));
+                }
+                match next.kind {
+                    JqlTokenKind::Identifier => {
+                        steps.push(AccessStep::Property(Self::slice(next, source)));
+                        cursor = next.span.end;
+                        i += 1;
+                        after_project = false;
+                    }
+                    JqlTokenKind::String => {
+                        steps.push(AccessStep::Property(Self::string_content(next, source)));
+                        cursor = next.span.end;
+                        i += 1;
+                        after_project = false;
+                    }
+                    JqlTokenKind::LBrace => {
+                        let (proj, next_i) = Self::parse_projection(tokens, i, source)?;
+                        cursor = tokens[next_i - 1].span.end;
+                        i = next_i;
+                        if let Some(step) = proj {
+                            steps.push(step);
+                            after_project = true;
+                        } else {
+                            after_project = false;
+                        }
+                    }
+                    other => {
+                        return Err(Self::unexpected_token(
+                            ExpectedSyntax::Token(JqlTokenKind::Identifier),
+                            other,
+                            next.span,
+                            source,
+                        ));
+                    }
+                }
+                continue;
+            }
+
+            match token.kind {
+                JqlTokenKind::Identifier if steps.is_empty() => {
+                    steps.push(AccessStep::Property(Self::slice(&token, source)));
+                    cursor = token.span.end;
+                    i += 1;
+                }
+                JqlTokenKind::String if steps.is_empty() => {
+                    steps.push(AccessStep::Property(Self::string_content(&token, source)));
+                    cursor = token.span.end;
+                    i += 1;
+                }
+                JqlTokenKind::Dot => {
+                    i += 1;
+                    cursor = token.span.end;
+                    let Some(next) = tokens.get(i) else {
+                        return Err(JqlError::new(
+                            JqlErrorKind::InvalidExpression,
+                            token.span,
+                            source,
+                        ));
+                    };
+                    if !Self::adjacent(cursor, next) {
+                        return Err(JqlError::new(
+                            JqlErrorKind::InvalidExpression,
+                            token.span,
+                            source,
+                        ));
+                    }
+                    match next.kind {
+                        JqlTokenKind::Identifier => {
+                            steps.push(AccessStep::Property(Self::slice(next, source)));
+                            cursor = next.span.end;
+                            i += 1;
+                        }
+                        JqlTokenKind::String => {
+                            steps.push(AccessStep::Property(Self::string_content(next, source)));
+                            cursor = next.span.end;
+                            i += 1;
+                        }
+                        JqlTokenKind::LBrace => {
+                            let (proj, next_i) = Self::parse_projection(tokens, i, source)?;
+                            cursor = tokens[next_i - 1].span.end;
+                            i = next_i;
+                            if let Some(step) = proj {
+                                steps.push(step);
+                                after_project = true;
+                            }
+                        }
+                        other => {
+                            return Err(Self::unexpected_token(
+                                ExpectedSyntax::Token(JqlTokenKind::Identifier),
+                                other,
+                                next.span,
+                                source,
+                            ));
+                        }
+                    }
+                }
+                JqlTokenKind::LBracket => {
+                    let (step, next_i) = Self::parse_index_step(tokens, i, source)?;
+                    cursor = tokens[next_i - 1].span.end;
+                    i = next_i;
+                    steps.push(step);
+                }
+                JqlTokenKind::LBrace => {
+                    let (proj, next_i) = Self::parse_projection(tokens, i, source)?;
+                    cursor = tokens[next_i - 1].span.end;
+                    i = next_i;
+                    if let Some(step) = proj {
+                        steps.push(step);
+                        after_project = true;
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        Ok((JqlAstNode::access(steps), i))
+    }
+
     fn parse_call<'a>(
         tokens: &[JqlToken],
         idx: usize,
@@ -264,17 +628,16 @@ impl JqlParser {
                     operand_stack.push_front(JqlAstNode::number(&token, source)?);
                 }
 
+                JqlTokenKind::Dot => {
+                    let (node, next_idx) = Self::parse_access(tokens, idx, source)?;
+                    operand_stack.push_front(node);
+                    idx = next_idx;
+                }
+
                 JqlTokenKind::Identifier => {
-                    let token = tokens.get(idx).unwrap();
-                    let content = source.get(token.span.start..token.span.end).unwrap();
-                    if content.starts_with('.') {
-                        operand_stack.push_front(JqlAstNode::identifier(token, source)?);
-                        idx += 1;
-                    } else {
-                        let (node, next_idx) = Self::parse_call(tokens, idx, *token, source)?;
-                        operand_stack.push_front(node);
-                        idx = next_idx;
-                    }
+                    let (node, next_idx) = Self::parse_call(tokens, idx, token, source)?;
+                    operand_stack.push_front(node);
+                    idx = next_idx;
                 }
 
                 JqlTokenKind::Pipe

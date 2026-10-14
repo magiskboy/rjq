@@ -194,7 +194,7 @@ fn words_longer_than_a_literal_are_identifiers() {
         run("true."),
         Ok(vec![
             tok(JqlTokenKind::Boolean, 0, 4),
-            tok(JqlTokenKind::Identifier, 4, 5),
+            tok(JqlTokenKind::Dot, 4, 5),
         ])
     );
 }
@@ -227,7 +227,7 @@ fn numbers_are_digit_runs() {
         run("1."),
         Ok(vec![
             tok(JqlTokenKind::Number, 0, 1),
-            tok(JqlTokenKind::Identifier, 1, 2),
+            tok(JqlTokenKind::Dot, 1, 2),
         ])
     );
     assert_eq!(run("1.2"), Ok(vec![tok(JqlTokenKind::Number, 0, 3)]));
@@ -259,7 +259,7 @@ fn json_number_forms() {
         run("1."),
         Ok(vec![
             tok(JqlTokenKind::Number, 0, 1),
-            tok(JqlTokenKind::Identifier, 1, 2),
+            tok(JqlTokenKind::Dot, 1, 2),
         ])
     );
     assert_eq!(
@@ -411,43 +411,95 @@ fn braces_colon_and_comma() {
             tok(JqlTokenKind::LBrace, 0, 1),
             tok(JqlTokenKind::Identifier, 2, 6),
             tok(JqlTokenKind::Colon, 6, 7),
-            tok(JqlTokenKind::Identifier, 8, 14),
+            tok(JqlTokenKind::Dot, 8, 9),
+            tok(JqlTokenKind::Identifier, 9, 14),
             tok(JqlTokenKind::Comma, 14, 15),
             tok(JqlTokenKind::Identifier, 16, 19),
             tok(JqlTokenKind::Colon, 19, 20),
-            tok(JqlTokenKind::Identifier, 21, 27),
+            tok(JqlTokenKind::Dot, 21, 22),
+            tok(JqlTokenKind::Identifier, 22, 27),
             tok(JqlTokenKind::RBrace, 28, 29),
         ])
     );
 }
 
 #[test]
-fn access_paths_still_absorb_braces_colon_and_comma() {
-    for source in [".person{name,age}", ".jobs[1:3]", ".jobs[0,2]"] {
-        assert_eq!(
-            run(source),
-            Ok(vec![tok(JqlTokenKind::Identifier, 0, source.len())]),
-            "source {source:?}"
-        );
-    }
+fn access_paths_tokenize_into_structured_tokens() {
+    assert_eq!(
+        run(".person{name,age}"),
+        Ok(vec![
+            tok(JqlTokenKind::Dot, 0, 1),
+            tok(JqlTokenKind::Identifier, 1, 7),
+            tok(JqlTokenKind::LBrace, 7, 8),
+            tok(JqlTokenKind::Identifier, 8, 12),
+            tok(JqlTokenKind::Comma, 12, 13),
+            tok(JqlTokenKind::Identifier, 13, 16),
+            tok(JqlTokenKind::RBrace, 16, 17),
+        ])
+    );
+    assert_eq!(
+        run(".jobs[1:3]"),
+        Ok(vec![
+            tok(JqlTokenKind::Dot, 0, 1),
+            tok(JqlTokenKind::Identifier, 1, 5),
+            tok(JqlTokenKind::LBracket, 5, 6),
+            tok(JqlTokenKind::Number, 6, 7),
+            tok(JqlTokenKind::Colon, 7, 8),
+            tok(JqlTokenKind::Number, 8, 9),
+            tok(JqlTokenKind::RBracket, 9, 10),
+        ])
+    );
+    assert_eq!(
+        run(".jobs[0,2]"),
+        Ok(vec![
+            tok(JqlTokenKind::Dot, 0, 1),
+            tok(JqlTokenKind::Identifier, 1, 5),
+            tok(JqlTokenKind::LBracket, 5, 6),
+            tok(JqlTokenKind::Number, 6, 7),
+            tok(JqlTokenKind::Comma, 7, 8),
+            tok(JqlTokenKind::Number, 8, 9),
+            tok(JqlTokenKind::RBracket, 9, 10),
+        ])
+    );
 }
 
 #[test]
-fn access_paths_absorb_quoted_keys_and_wide_projection() {
-    for source in [
-        ".\"kebab-case\"",
-        ".[\"x-y\"]",
-        ".[\"with space\"]",
-        ".meta{\"_id\",x2,\"a-b\"}",
-        "._id",
-        ".person{_id,name2}",
-    ] {
-        assert_eq!(
-            run(source),
-            Ok(vec![tok(JqlTokenKind::Identifier, 0, source.len())]),
-            "source {source:?}"
-        );
-    }
+fn access_paths_tokenize_quoted_keys_and_wide_projection() {
+    assert_eq!(
+        run(".\"kebab-case\""),
+        Ok(vec![
+            tok(JqlTokenKind::Dot, 0, 1),
+            tok(JqlTokenKind::String, 1, 13),
+        ])
+    );
+    assert_eq!(
+        run(".[\"x-y\"]"),
+        Ok(vec![
+            tok(JqlTokenKind::Dot, 0, 1),
+            tok(JqlTokenKind::LBracket, 1, 2),
+            tok(JqlTokenKind::String, 2, 7),
+            tok(JqlTokenKind::RBracket, 7, 8),
+        ])
+    );
+    assert_eq!(
+        run("._id"),
+        Ok(vec![
+            tok(JqlTokenKind::Dot, 0, 1),
+            tok(JqlTokenKind::Identifier, 1, 4),
+        ])
+    );
+    assert_eq!(
+        run(".person{_id,name2}"),
+        Ok(vec![
+            tok(JqlTokenKind::Dot, 0, 1),
+            tok(JqlTokenKind::Identifier, 1, 7),
+            tok(JqlTokenKind::LBrace, 7, 8),
+            tok(JqlTokenKind::Identifier, 8, 11),
+            tok(JqlTokenKind::Comma, 11, 12),
+            tok(JqlTokenKind::Identifier, 12, 17),
+            tok(JqlTokenKind::RBrace, 17, 18),
+        ])
+    );
 }
 
 #[test]
@@ -487,9 +539,23 @@ fn arithmetic_operators() {
 
 #[test]
 fn unknown_characters_are_errors() {
-    for source in ["@", "#", "[", "]", "'", "é", "[0]"] {
+    for source in ["@", "#", "'", "é"] {
         assert_invalid(source);
     }
+}
+
+#[test]
+fn brackets_are_tokens() {
+    assert_eq!(run("["), Ok(vec![tok(JqlTokenKind::LBracket, 0, 1)]));
+    assert_eq!(run("]"), Ok(vec![tok(JqlTokenKind::RBracket, 0, 1)]));
+    assert_eq!(
+        run("[0]"),
+        Ok(vec![
+            tok(JqlTokenKind::LBracket, 0, 1),
+            tok(JqlTokenKind::Number, 1, 2),
+            tok(JqlTokenKind::RBracket, 2, 3),
+        ])
+    );
 }
 
 #[test]
@@ -513,23 +579,30 @@ fn readme_pipeline() {
     assert_eq!(
         kinds(&tokens),
         vec![
-            JqlTokenKind::Identifier,
+            JqlTokenKind::Dot,
+            JqlTokenKind::LBracket,
+            JqlTokenKind::Number,
+            JqlTokenKind::RBracket,
             JqlTokenKind::Pipe,
             JqlTokenKind::Identifier,
             JqlTokenKind::LParen,
+            JqlTokenKind::Dot,
             JqlTokenKind::Identifier,
             JqlTokenKind::GreaterOp,
             JqlTokenKind::Number,
             JqlTokenKind::AndLogicalOp,
+            JqlTokenKind::Dot,
             JqlTokenKind::Identifier,
             JqlTokenKind::LessOp,
             JqlTokenKind::Number,
             JqlTokenKind::AndLogicalOp,
             JqlTokenKind::LParen,
+            JqlTokenKind::Dot,
             JqlTokenKind::Identifier,
             JqlTokenKind::GreaterOp,
             JqlTokenKind::Number,
             JqlTokenKind::OrLogicalOp,
+            JqlTokenKind::Dot,
             JqlTokenKind::Identifier,
             JqlTokenKind::GreaterEqualOp,
             JqlTokenKind::Number,
@@ -544,12 +617,11 @@ fn readme_pipeline() {
     assert_eq!(
         text,
         vec![
-            ".[1]", "|", "filter", "(", ".id", ">", "10", "&&", ".age", "<", "20", "&&", "(",
-            ".money", ">", "10", "||", ".gold", ">=", "1", ")", ")",
+            ".", "[", "1", "]", "|", "filter", "(", ".", "id", ">", "10", "&&", ".", "age", "<",
+            "20", "&&", "(", ".", "money", ">", "10", "||", ".", "gold", ">=", "1", ")", ")",
         ]
     );
-    assert_eq!(tokens[0].span, Span { start: 0, end: 4 });
-    assert_eq!(tokens[1].span, Span { start: 5, end: 6 });
-    assert_eq!(tokens[6].span, Span { start: 20, end: 22 });
+    assert_eq!(tokens[0].span, Span { start: 0, end: 1 });
+    assert_eq!(tokens[4].span, Span { start: 5, end: 6 });
     assert_eq!(tokens.last().unwrap().span, Span { start: 66, end: 67 });
 }

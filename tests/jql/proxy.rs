@@ -1,11 +1,20 @@
 use super::Proxy;
+use crate::jql::ast::{AccessStep, JqlAstNode};
 use crate::jql::error::JqlError;
 use crate::jql::fixture::{at, sample};
+use crate::jql::jql_parse;
 use crate::json::value::JsonValue;
+
+fn steps<'a>(source: &'a str) -> Vec<AccessStep<'a>> {
+    match jql_parse(source).unwrap_or_else(|e| panic!("should parse {source:?}: {e}")) {
+        JqlAstNode::Access(steps) => steps,
+        other => panic!("expected Access for {source:?}, got {other:?}"),
+    }
+}
 
 fn proxy_get(data: &JsonValue<'_>, ref_str: &str) -> Result<JsonValue<'static>, JqlError> {
     Proxy::new(data)
-        .get(ref_str)
+        .get_steps(&steps(ref_str))
         .map(|p| p.data().clone().into_owned())
 }
 
@@ -220,15 +229,6 @@ fn get_nested_index_selection_and_projection() {
 }
 
 #[test]
-fn get_invalid_reference_string() {
-    let data = sample();
-    assert_get_err(&data, "jobs");
-    assert_get_err(&data, ".jobs[");
-    assert_get_err(&data, ".jobs[1");
-    assert_get_err(&data, ".jobs[1:2:3]");
-}
-
-#[test]
 fn get_missing_property() {
     let data = sample();
     assert_get_err(&data, ".missing");
@@ -258,7 +258,7 @@ fn get_array_ops_on_non_array() {
 fn get_object_key_filter_on_object() {
     let data = sample();
     let result = Proxy::new(&data)
-        .get(".person{name,age,city}")
+        .get_steps(&steps(".person{name,age,city}"))
         .expect("should resolve reference");
 
     assert_eq!(
@@ -278,7 +278,7 @@ fn get_array_range_out_of_bounds() {
 fn get_returns_owned_proxy_data() {
     let data = sample();
     let proxy = Proxy::new(&data);
-    let result = proxy.get(".jobs[1]").expect("should resolve reference");
+    let result = proxy.get_steps(&steps(".jobs[1]")).expect("should resolve reference");
     assert_eq!(result.data(), &at(".jobs[1]"));
 }
 

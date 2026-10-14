@@ -1,9 +1,8 @@
-use std::{borrow::Cow, rc::Rc, str::FromStr};
+use std::{borrow::Cow, rc::Rc};
 
 use crate::Structured;
+use crate::jql::ast::{AccessStep, ArrayIndex};
 use crate::jql::error::{JqlError, JqlErrorKind};
-use crate::jql::reference::{Access, ArrayIndex};
-use crate::jql::reference::{PropertySelection, Reference};
 use crate::json::value::JsonValue;
 
 /// Engine-side value carrier with lazy materialization.
@@ -174,7 +173,7 @@ impl<'a> Proxy<'a> {
         }
     }
 
-    fn select_keys(value: &JsonValue<'a>, keys: &Vec<String>) -> Result<JsonValue<'a>, JqlError> {
+    fn select_keys(value: &JsonValue<'a>, keys: &[&str]) -> Result<JsonValue<'a>, JqlError> {
         match value {
             JsonValue::Array(items) => {
                 let values = items
@@ -185,7 +184,7 @@ impl<'a> Proxy<'a> {
             }
             JsonValue::Object(m) => {
                 let val = m.iter().filter_map(|(k, v)| {
-                    if keys.iter().any(|key| key == k.as_ref()) {
+                    if keys.iter().any(|key| *key == k.as_ref()) {
                         Some((k.clone(), v.clone()))
                     } else {
                         None
@@ -212,58 +211,36 @@ impl<'a> Proxy<'a> {
     }
 
     /// Walk a borrowed document root — results stay [`ValueRef::Borrowed`] when possible.
-    fn get_borrowed(root: &'a JsonValue<'a>, access: Vec<Access>) -> Result<Proxy<'a>, JqlError> {
+    fn get_borrowed(root: &'a JsonValue<'a>, access: &[AccessStep<'_>]) -> Result<Proxy<'a>, JqlError> {
         let mut current = Cow::Borrowed(root);
 
         for step in access {
             current = match step {
-                Access::PropertyAccess {
-                    property,
-                    properties,
-                } => {
-                    let next = if property.is_empty() {
-                        current
-                    } else {
-                        match current {
-                            Cow::Borrowed(v) => {
-                                Cow::Borrowed(Self::descend_borrowed(v, &property)?)
-                            }
-                            Cow::Owned(v) => {
-                                Cow::Owned(v.get(&property).map_err(JqlError::from)?.clone())
-                            }
-                        }
-                    };
-                    match properties {
-                        PropertySelection::All => next,
-                        PropertySelection::Properties(keys) => {
-                            Cow::Owned(Self::select_keys(next.as_ref(), &keys)?)
-                        }
+                AccessStep::Property(property) => match current {
+                    Cow::Borrowed(v) => Cow::Borrowed(Self::descend_borrowed(v, property)?),
+                    Cow::Owned(v) => {
+                        Cow::Owned(v.get(*property).map_err(JqlError::from)?.clone())
                     }
-                }
-                Access::IndexAccess { index, properties } => {
-                    let next = match index {
-                        ArrayIndex::All => current,
-                        ArrayIndex::Index(index) => match current {
-                            Cow::Borrowed(v) => {
-                                Cow::Borrowed(Self::descend_borrowed(v, &index.to_string())?)
-                            }
-                            Cow::Owned(v) => Cow::Owned(
-                                v.get(&index.to_string()).map_err(JqlError::from)?.clone(),
-                            ),
-                        },
-                        ArrayIndex::Range { start, end } => {
-                            Cow::Owned(Self::slice(current.as_ref(), start, end)?)
+                },
+                AccessStep::Index(index) => match index {
+                    ArrayIndex::All => current,
+                    ArrayIndex::Index(index) => match current {
+                        Cow::Borrowed(v) => {
+                            Cow::Borrowed(Self::descend_borrowed(v, &index.to_string())?)
                         }
-                        ArrayIndex::MultipleIndex(indices) => {
-                            Cow::Owned(Self::select(current.as_ref(), indices)?)
-                        }
-                    };
-                    match properties {
-                        PropertySelection::All => next,
-                        PropertySelection::Properties(keys) => {
-                            Cow::Owned(Self::select_keys(next.as_ref(), &keys)?)
-                        }
+                        Cow::Owned(v) => Cow::Owned(
+                            v.get(&index.to_string()).map_err(JqlError::from)?.clone(),
+                        ),
+                    },
+                    ArrayIndex::Range { start, end } => {
+                        Cow::Owned(Self::slice(current.as_ref(), *start, *end)?)
                     }
+                    ArrayIndex::MultipleIndex(indices) => {
+                        Cow::Owned(Self::select(current.as_ref(), indices.clone())?)
+                    }
+                },
+                AccessStep::Project(keys) => {
+                    Cow::Owned(Self::select_keys(current.as_ref(), keys)?)
                 }
             };
         }
@@ -278,7 +255,7 @@ impl<'a> Proxy<'a> {
 
     /// Walk an owned/shared tree by reference and clone only the final node
     /// (or projection), instead of cloning the root before every descend step.
-    fn get_owned_view(root: &JsonValue<'a>, access: Vec<Access>) -> Result<Proxy<'a>, JqlError> {
+    fn get_owned_view(root: &JsonValue<'a>, access: &[AccessStep<'_>]) -> Result<Proxy<'a>, JqlError> {
         enum Cursor<'b, 'a> {
             Ref(&'b JsonValue<'a>),
             Owned(JsonValue<'a>),
@@ -288,67 +265,41 @@ impl<'a> Proxy<'a> {
 
         for step in access {
             current = match step {
-                Access::PropertyAccess {
-                    property,
-                    properties,
-                } => {
-                    let next = if property.is_empty() {
-                        current
-                    } else {
-                        match current {
-                            Cursor::Ref(v) => Cursor::Ref(Self::descend_ref(v, &property)?),
-                            Cursor::Owned(v) => {
-                                Cursor::Owned(v.get(&property).map_err(JqlError::from)?.clone())
-                            }
-                        }
-                    };
-                    match properties {
-                        PropertySelection::All => next,
-                        PropertySelection::Properties(keys) => {
-                            let view = match &next {
-                                Cursor::Ref(v) => *v,
-                                Cursor::Owned(v) => v,
-                            };
-                            Cursor::Owned(Self::select_keys(view, &keys)?)
-                        }
+                AccessStep::Property(property) => match current {
+                    Cursor::Ref(v) => Cursor::Ref(Self::descend_ref(v, property)?),
+                    Cursor::Owned(v) => {
+                        Cursor::Owned(v.get(*property).map_err(JqlError::from)?.clone())
                     }
-                }
-                Access::IndexAccess { index, properties } => {
-                    let next = match index {
-                        ArrayIndex::All => current,
-                        ArrayIndex::Index(index) => match current {
-                            Cursor::Ref(v) => {
-                                Cursor::Ref(Self::descend_ref(v, &index.to_string())?)
-                            }
-                            Cursor::Owned(v) => Cursor::Owned(
-                                v.get(&index.to_string()).map_err(JqlError::from)?.clone(),
-                            ),
-                        },
-                        ArrayIndex::Range { start, end } => {
-                            let view = match &current {
-                                Cursor::Ref(v) => *v,
-                                Cursor::Owned(v) => v,
-                            };
-                            Cursor::Owned(Self::slice(view, start, end)?)
-                        }
-                        ArrayIndex::MultipleIndex(indices) => {
-                            let view = match &current {
-                                Cursor::Ref(v) => *v,
-                                Cursor::Owned(v) => v,
-                            };
-                            Cursor::Owned(Self::select(view, indices)?)
-                        }
-                    };
-                    match properties {
-                        PropertySelection::All => next,
-                        PropertySelection::Properties(keys) => {
-                            let view = match &next {
-                                Cursor::Ref(v) => *v,
-                                Cursor::Owned(v) => v,
-                            };
-                            Cursor::Owned(Self::select_keys(view, &keys)?)
-                        }
+                },
+                AccessStep::Index(index) => match index {
+                    ArrayIndex::All => current,
+                    ArrayIndex::Index(index) => match current {
+                        Cursor::Ref(v) => Cursor::Ref(Self::descend_ref(v, &index.to_string())?),
+                        Cursor::Owned(v) => Cursor::Owned(
+                            v.get(&index.to_string()).map_err(JqlError::from)?.clone(),
+                        ),
+                    },
+                    ArrayIndex::Range { start, end } => {
+                        let view = match &current {
+                            Cursor::Ref(v) => *v,
+                            Cursor::Owned(v) => v,
+                        };
+                        Cursor::Owned(Self::slice(view, *start, *end)?)
                     }
+                    ArrayIndex::MultipleIndex(indices) => {
+                        let view = match &current {
+                            Cursor::Ref(v) => *v,
+                            Cursor::Owned(v) => v,
+                        };
+                        Cursor::Owned(Self::select(view, indices.clone())?)
+                    }
+                },
+                AccessStep::Project(keys) => {
+                    let view = match &current {
+                        Cursor::Ref(v) => *v,
+                        Cursor::Owned(v) => v,
+                    };
+                    Cursor::Owned(Self::select_keys(view, keys)?)
                 }
             };
         }
@@ -359,27 +310,16 @@ impl<'a> Proxy<'a> {
         })
     }
 
-    pub fn get(&self, ref_str: &str) -> Result<Proxy<'a>, JqlError> {
-        let jref = Reference::from_str(ref_str)?;
-        if is_identity_access(&jref.access) {
+    pub fn get_steps(&self, access: &[AccessStep<'_>]) -> Result<Proxy<'a>, JqlError> {
+        if access.is_empty() {
             return Ok(self.clone());
         }
         match &self.data {
-            ValueRef::Borrowed(v) => Self::get_borrowed(v, jref.access),
-            ValueRef::Shared(v) => Self::get_owned_view(v.as_ref(), jref.access),
-            ValueRef::Owned(v) => Self::get_owned_view(v, jref.access),
+            ValueRef::Borrowed(v) => Self::get_borrowed(v, access),
+            ValueRef::Shared(v) => Self::get_owned_view(v.as_ref(), access),
+            ValueRef::Owned(v) => Self::get_owned_view(v, access),
         }
     }
-}
-
-fn is_identity_access(access: &[Access]) -> bool {
-    matches!(
-        access,
-        [Access::PropertyAccess {
-            property,
-            properties: PropertySelection::All,
-        }] if property.is_empty()
-    )
 }
 
 #[cfg(test)]
