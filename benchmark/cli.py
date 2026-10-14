@@ -35,6 +35,11 @@ CASES = [
         "filter(.active == true) | map({ name: .name, city: .meta.city, sku: .orders[0].sku })",
         "map(select(.active == true)) | map({ name: .name, city: .meta.city, sku: .orders[0].sku })",
     ),
+    (
+        "if_else",
+        'map(if .score > 50 then "high" elif .score > 20 then "mid" else "low" end)',
+        'map(if .score > 50 then "high" elif .score > 20 then "mid" else "low" end)',
+    ),
 ]
 
 
@@ -135,7 +140,7 @@ def write_plot(
 
     x = np.arange(len(cases))
     width = 0.36
-    fig, ax = plt.subplots(figsize=(9.5, 5.2), dpi=150)
+    fig, ax = plt.subplots(figsize=(10.5, 5.2), dpi=150)
     ax.bar(x - width / 2, rjq_ms, width, label="rjq", color="#2A6F97", zorder=3)
     ax.bar(x + width / 2, jq_ms, width, label="jq", color="#E76F51", zorder=3)
     ax.set_ylabel("Median wall time (ms)")

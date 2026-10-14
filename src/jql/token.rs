@@ -18,6 +18,13 @@ pub enum JqlTokenKind {
     Boolean,
     Null,
 
+    // branching keywords (before Pipe so operator PartialOrd stays valid)
+    If,
+    Then,
+    Elif,
+    Else,
+    End,
+
     // and/or must be less than others
     Pipe,
 
@@ -60,6 +67,11 @@ impl std::fmt::Display for JqlTokenKind {
             Self::String => write!(f, "String"),
             Self::Boolean => write!(f, "Boolean"),
             Self::Null => write!(f, "Null"),
+            Self::If => write!(f, "If"),
+            Self::Then => write!(f, "Then"),
+            Self::Elif => write!(f, "Elif"),
+            Self::Else => write!(f, "Else"),
+            Self::End => write!(f, "End"),
             Self::Identifier => write!(f, "Identifier"),
             Self::EqualOp => write!(f, "Equal"),
             Self::NotEqualOp => write!(f, "NotEqualOp"),
@@ -98,6 +110,11 @@ impl JqlTokenKind {
             Self::String => "string",
             Self::Boolean => "boolean",
             Self::Null => "'null'",
+            Self::If => "'if'",
+            Self::Then => "'then'",
+            Self::Elif => "'elif'",
+            Self::Else => "'else'",
+            Self::End => "'end'",
             Self::Identifier => "identifier",
             Self::EqualOp => "'=='",
             Self::NotEqualOp => "'!='",

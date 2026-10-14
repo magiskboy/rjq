@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 use crate::{
     jql::{
-        ast::{AccessStep, JqlAstNode, JqlBinaryKind, JqlNumericKind, ObjectField, ObjectKey},
+        ast::{AccessStep, IfArm, JqlAstNode, JqlBinaryKind, JqlNumericKind, ObjectField, ObjectKey},
         error::{JqlError, JqlErrorKind},
         funcs,
         proxy::Proxy,
@@ -29,6 +29,7 @@ impl Engine {
             JqlAstNode::Numeric { kind, left, right } => Self::numeric(kind, left, right, value),
             JqlAstNode::Binary { kind, left, right } => Self::binary(kind, left, right, value),
             JqlAstNode::Object { fields } => Self::object(value, fields),
+            JqlAstNode::If { arms, else_body } => Self::if_expr(value, arms, else_body),
             _ => Err(op_not_support("ast node")),
         }
     }
@@ -147,6 +148,23 @@ impl Engine {
             entries.push((key, field_value.into_value()));
         }
         Ok(Proxy::owned(JsonValue::object(entries)))
+    }
+
+    /// Evaluate `if` / `elif` / `else`: cond is taken only when it yields JSON `true`
+    /// (same truthiness as `filter` / `any` / `all`). Only the chosen branch runs.
+    fn if_expr<'a>(
+        value: Proxy<'a>,
+        arms: &[IfArm<'_>],
+        else_body: &JqlAstNode<'_>,
+    ) -> Result<Proxy<'a>, JqlError> {
+        let value = value.share();
+        for arm in arms {
+            let cond = Engine::execute(value.clone(), &arm.cond)?;
+            if matches!(cond.data(), JsonValue::True) {
+                return Engine::execute(value, &arm.then_body);
+            }
+        }
+        Engine::execute(value, else_body)
     }
 }
 

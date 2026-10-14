@@ -25,7 +25,7 @@ uv run --with matplotlib python benchmark/cli.py \
   --size-mb 10 --runs 7 --plot benchmark/cli_rjq_vs_jq.png
 ```
 
-Cases: **access**, **filter**, **map**, **filter_map** on nested records.
+Cases: **access**, **filter**, **map**, **filter_map**, **if_else** on nested records.
 
 ## Python (`rjson_load` vs `rjson_loads`)
 

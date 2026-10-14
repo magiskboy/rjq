@@ -1,7 +1,7 @@
 use crate::Span;
 use crate::jql::{
-    ast::{AccessStep, ArrayIndex, JqlAstNode, JqlBinaryKind, ObjectField, ObjectKey},
-    error::{JqlError, JqlErrorKind},
+    ast::{AccessStep, ArrayIndex, IfArm, JqlAstNode, JqlBinaryKind, ObjectField, ObjectKey},
+    error::{ExpectedSyntax, JqlError, JqlErrorKind},
     lexer::JqlLexer,
     parser::JqlParser,
     token::{JqlToken, JqlTokenKind},
@@ -75,6 +75,19 @@ fn object<'a>(fields: Vec<(&'a str, JqlAstNode<'a>)>) -> JqlAstNode<'a> {
                 value: Box::new(value),
             })
             .collect(),
+    }
+}
+
+fn if_expr<'a>(arms: Vec<(JqlAstNode<'a>, JqlAstNode<'a>)>, else_body: JqlAstNode<'a>) -> JqlAstNode<'a> {
+    JqlAstNode::If {
+        arms: arms
+            .into_iter()
+            .map(|(cond, then_body)| IfArm {
+                cond: Box::new(cond),
+                then_body: Box::new(then_body),
+            })
+            .collect(),
+        else_body: Box::new(else_body),
     }
 }
 
@@ -793,4 +806,114 @@ fn parse_errors_carry_kind_and_display() {
         err.to_string(),
         "parse error at 1:1 (0..6): expected a closed parenthesis"
     );
+}
+
+#[test]
+fn if_then_else_end() {
+    assert_eq!(
+        parse("if .active then .title else null end", &[]),
+        Ok(if_expr(
+            vec![(access(vec![prop("active")]), access(vec![prop("title")]))],
+            JqlAstNode::Null,
+        ))
+    );
+}
+
+#[test]
+fn if_with_elif_arms() {
+    assert_eq!(
+        parse(
+            r#"if .money > 100 then "senior" elif .money > 50 then "mid" else "junior" end"#,
+            &[],
+        ),
+        Ok(if_expr(
+            vec![
+                (
+                    binary(
+                        JqlBinaryKind::Greater,
+                        access(vec![prop("money")]),
+                        number(100.0),
+                    ),
+                    string("senior"),
+                ),
+                (
+                    binary(
+                        JqlBinaryKind::Greater,
+                        access(vec![prop("money")]),
+                        number(50.0),
+                    ),
+                    string("mid"),
+                ),
+            ],
+            string("junior"),
+        ))
+    );
+}
+
+#[test]
+fn if_as_pipe_operand_and_nested() {
+    assert_eq!(
+        parse(
+            r#".jobs[] | if .money > 100 then "senior" else "junior" end"#,
+            &[],
+        ),
+        Ok(pipe(
+            access(vec![prop("jobs"), index(ArrayIndex::All)]),
+            if_expr(
+                vec![(
+                    binary(
+                        JqlBinaryKind::Greater,
+                        access(vec![prop("money")]),
+                        number(100.0),
+                    ),
+                    string("senior"),
+                )],
+                string("junior"),
+            ),
+        ))
+    );
+
+    assert_eq!(
+        parse("if .a then if .b then 1 else 2 end else 3 end", &[]),
+        Ok(if_expr(
+            vec![(
+                access(vec![prop("a")]),
+                if_expr(
+                    vec![(access(vec![prop("b")]), number(1.0))],
+                    number(2.0),
+                ),
+            )],
+            number(3.0),
+        ))
+    );
+}
+
+#[test]
+fn if_requires_else_and_end() {
+    let err = parse("if .a then 1 end", &[]).unwrap_err();
+    assert_eq!(
+        err.kind,
+        JqlErrorKind::UnexpectedToken {
+            expected: ExpectedSyntax::Token(JqlTokenKind::Else),
+            found: JqlTokenKind::End,
+        }
+    );
+
+    let err = parse("if .a then 1 else 2", &[]).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        JqlErrorKind::UnexpectedToken {
+            expected: ExpectedSyntax::Token(JqlTokenKind::End),
+            ..
+        }
+    ));
+
+    let err = parse("then", &[]).unwrap_err();
+    assert!(matches!(
+        err.kind,
+        JqlErrorKind::UnexpectedToken {
+            expected: ExpectedSyntax::Expression,
+            found: JqlTokenKind::Then,
+        }
+    ));
 }

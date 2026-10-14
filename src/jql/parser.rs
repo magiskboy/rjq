@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use crate::Span;
 use crate::jql::ast::JqlNumericKind;
 use crate::jql::{
-    ast::{AccessStep, ArrayIndex, JqlAstNode, JqlBinaryKind, ObjectField},
+    ast::{AccessStep, ArrayIndex, IfArm, JqlAstNode, JqlBinaryKind, ObjectField},
     error::{ExpectedSyntax, JqlError, JqlErrorKind},
     token::{JqlToken, JqlTokenKind},
 };
@@ -81,6 +81,159 @@ impl JqlParser {
             end += 1;
         }
         None
+    }
+
+    /// Find the next branch delimiter at nesting depth 0 (parens / braces / brackets /
+    /// nested `if`…`end`). Used to slice cond / then / else bodies for recursive parse.
+    fn find_branch_delim(
+        tokens: &[JqlToken],
+        start: usize,
+        delims: &[JqlTokenKind],
+    ) -> Option<usize> {
+        let mut paren = 0i32;
+        let mut brace = 0i32;
+        let mut bracket = 0i32;
+        let mut if_depth = 0i32;
+
+        for i in start..tokens.len() {
+            let kind = tokens[i].kind;
+            let at_surface = paren == 0 && brace == 0 && bracket == 0;
+
+            match kind {
+                JqlTokenKind::LParen => paren += 1,
+                JqlTokenKind::RParen => paren -= 1,
+                JqlTokenKind::LBrace => brace += 1,
+                JqlTokenKind::RBrace => brace -= 1,
+                JqlTokenKind::LBracket => bracket += 1,
+                JqlTokenKind::RBracket => bracket -= 1,
+                JqlTokenKind::If if at_surface => if_depth += 1,
+                JqlTokenKind::End if at_surface => {
+                    if if_depth == 0 {
+                        if delims.contains(&JqlTokenKind::End) {
+                            return Some(i);
+                        }
+                    } else {
+                        if_depth -= 1;
+                    }
+                }
+                kind if at_surface
+                    && if_depth == 0
+                    && kind != JqlTokenKind::End
+                    && delims.contains(&kind) =>
+                {
+                    return Some(i);
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn missing_branch_delim(
+        expected: JqlTokenKind,
+        tokens: &[JqlToken],
+        start: usize,
+        open_span: Span,
+        source: &str,
+    ) -> JqlError {
+        if start >= tokens.len() {
+            return Self::unexpected_token(
+                ExpectedSyntax::Token(expected),
+                JqlTokenKind::Stop,
+                open_span,
+                source,
+            );
+        }
+        let last = tokens.last().copied().unwrap_or(tokens[start]);
+        Self::unexpected_token(
+            ExpectedSyntax::Token(expected),
+            JqlTokenKind::Stop,
+            last.span,
+            source,
+        )
+    }
+
+    fn parse_if<'a>(
+        tokens: &[JqlToken],
+        idx: usize,
+        source: &'a str,
+    ) -> Result<(JqlAstNode<'a>, usize), JqlError> {
+        debug_assert_eq!(tokens[idx].kind, JqlTokenKind::If);
+        let if_token = tokens[idx];
+        let mut i = idx + 1;
+        let mut arms = Vec::new();
+
+        loop {
+            let then_pos = Self::find_branch_delim(tokens, i, &[JqlTokenKind::Then]).ok_or_else(
+                || Self::missing_branch_delim(JqlTokenKind::Then, tokens, i, if_token.span, source),
+            )?;
+            if then_pos == i {
+                return Err(Self::unexpected_token(
+                    ExpectedSyntax::Expression,
+                    JqlTokenKind::Then,
+                    tokens[then_pos].span,
+                    source,
+                ));
+            }
+            let cond = Self::parse(&tokens[i..then_pos], source)?;
+            i = then_pos + 1;
+
+            let arm_end = Self::find_branch_delim(
+                tokens,
+                i,
+                &[JqlTokenKind::Elif, JqlTokenKind::Else, JqlTokenKind::End],
+            )
+            .ok_or_else(|| {
+                Self::missing_branch_delim(JqlTokenKind::Else, tokens, i, if_token.span, source)
+            })?;
+            if arm_end == i {
+                return Err(Self::unexpected_token(
+                    ExpectedSyntax::Expression,
+                    tokens[arm_end].kind,
+                    tokens[arm_end].span,
+                    source,
+                ));
+            }
+            if tokens[arm_end].kind == JqlTokenKind::End {
+                return Err(Self::unexpected_token(
+                    ExpectedSyntax::Token(JqlTokenKind::Else),
+                    JqlTokenKind::End,
+                    tokens[arm_end].span,
+                    source,
+                ));
+            }
+
+            let body = Self::parse(&tokens[i..arm_end], source)?;
+            arms.push(IfArm {
+                cond: Box::new(cond),
+                then_body: Box::new(body),
+            });
+
+            match tokens[arm_end].kind {
+                JqlTokenKind::Elif => {
+                    i = arm_end + 1;
+                }
+                JqlTokenKind::Else => {
+                    i = arm_end + 1;
+                    break;
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        let end_pos = Self::find_branch_delim(tokens, i, &[JqlTokenKind::End]).ok_or_else(|| {
+            Self::missing_branch_delim(JqlTokenKind::End, tokens, i, if_token.span, source)
+        })?;
+        if end_pos == i {
+            return Err(Self::unexpected_token(
+                ExpectedSyntax::Expression,
+                JqlTokenKind::End,
+                tokens[end_pos].span,
+                source,
+            ));
+        }
+        let else_body = Self::parse(&tokens[i..end_pos], source)?;
+        Ok((JqlAstNode::if_expr(arms, else_body), end_pos + 1))
     }
 
     fn parse_object<'a>(tokens: &[JqlToken], source: &'a str) -> Result<JqlAstNode<'a>, JqlError> {
@@ -636,6 +789,12 @@ impl JqlParser {
 
                 JqlTokenKind::Identifier => {
                     let (node, next_idx) = Self::parse_call(tokens, idx, token, source)?;
+                    operand_stack.push_front(node);
+                    idx = next_idx;
+                }
+
+                JqlTokenKind::If => {
+                    let (node, next_idx) = Self::parse_if(tokens, idx, source)?;
                     operand_stack.push_front(node);
                     idx = next_idx;
                 }

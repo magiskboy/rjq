@@ -157,6 +157,43 @@ fn booleans_null_and_keyword() {
 }
 
 #[test]
+fn branching_keywords() {
+    let cases = [
+        ("if", JqlTokenKind::If),
+        ("then", JqlTokenKind::Then),
+        ("elif", JqlTokenKind::Elif),
+        ("else", JqlTokenKind::Else),
+        ("end", JqlTokenKind::End),
+    ];
+    for (source, kind) in cases {
+        assert_eq!(
+            run(source),
+            Ok(vec![tok(kind, 0, source.len())]),
+            "keyword {source:?}"
+        );
+    }
+
+    assert_eq!(
+        run("if .x then 1 elif .y then 2 else 3 end"),
+        Ok(vec![
+            tok(JqlTokenKind::If, 0, 2),
+            tok(JqlTokenKind::Dot, 3, 4),
+            tok(JqlTokenKind::Identifier, 4, 5),
+            tok(JqlTokenKind::Then, 6, 10),
+            tok(JqlTokenKind::Number, 11, 12),
+            tok(JqlTokenKind::Elif, 13, 17),
+            tok(JqlTokenKind::Dot, 18, 19),
+            tok(JqlTokenKind::Identifier, 19, 20),
+            tok(JqlTokenKind::Then, 21, 25),
+            tok(JqlTokenKind::Number, 26, 27),
+            tok(JqlTokenKind::Else, 28, 32),
+            tok(JqlTokenKind::Number, 33, 34),
+            tok(JqlTokenKind::End, 35, 38),
+        ])
+    );
+}
+
+#[test]
 fn words_longer_than_a_literal_are_identifiers() {
     let cases = [
         "truex",
@@ -175,11 +212,27 @@ fn words_longer_than_a_literal_are_identifiers() {
         "t",
         "tr",
         "tru",
+        "th",
+        "the",
+        "thenx",
         "f",
         "fa",
         "n",
         "nu",
         "nul",
+        "i",
+        "ifx",
+        "e",
+        "el",
+        "eli",
+        "els",
+        "en",
+        "elifx",
+        "elsey",
+        "ending",
+        "IF",
+        "THEN",
+        "ELSE",
         "fil",
     ];
     for source in cases {
@@ -195,6 +248,13 @@ fn words_longer_than_a_literal_are_identifiers() {
         Ok(vec![
             tok(JqlTokenKind::Boolean, 0, 4),
             tok(JqlTokenKind::Dot, 4, 5),
+        ])
+    );
+    assert_eq!(
+        run("if."),
+        Ok(vec![
+            tok(JqlTokenKind::If, 0, 2),
+            tok(JqlTokenKind::Dot, 2, 3),
         ])
     );
 }

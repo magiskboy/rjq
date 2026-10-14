@@ -88,6 +88,12 @@ pub enum AccessStep<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct IfArm<'a> {
+    pub cond: Box<JqlAstNode<'a>>,
+    pub then_body: Box<JqlAstNode<'a>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum JqlAstNode<'a> {
     LParen,
     RParen,
@@ -114,6 +120,10 @@ pub enum JqlAstNode<'a> {
     },
     Object {
         fields: Vec<ObjectField<'a>>,
+    },
+    If {
+        arms: Vec<IfArm<'a>>,
+        else_body: Box<JqlAstNode<'a>>,
     },
 
     // Operand node
@@ -176,6 +186,13 @@ impl<'a> JqlAstNode<'a> {
 
     pub fn object(fields: Vec<ObjectField<'a>>) -> Result<JqlAstNode<'a>, JqlError> {
         Ok(JqlAstNode::Object { fields })
+    }
+
+    pub fn if_expr(arms: Vec<IfArm<'a>>, else_body: JqlAstNode<'a>) -> JqlAstNode<'a> {
+        JqlAstNode::If {
+            arms,
+            else_body: Box::new(else_body),
+        }
     }
 
     pub fn object_key(token: &JqlToken, source: &'a str) -> Result<ObjectKey<'a>, JqlError> {

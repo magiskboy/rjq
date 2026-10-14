@@ -28,6 +28,7 @@ factor     = literal
            | access
            | call
            | object
+           | if_expr
            | "(" expression ")" ;
 
 comp_op    = "==" | "!=" | ">" | ">=" | "<" | "<=" ;
@@ -44,7 +45,17 @@ object     = "{" [ field { "," field } ] "}" ;
 field      = object_key ":" expression ;
 object_key = name | string ;
 
+(* Branching: `else` is required; cond/then/else are full expressions. *)
+if_expr    = "if" expression "then" expression
+             { "elif" expression "then" expression }
+             "else" expression
+             "end" ;
+
 (* ── Lexical forms ─────────────────────────────────────────────────── *)
+
+(* Reserved keywords — not valid as `name` / bare calls. *)
+keyword    = "true" | "false" | "null"
+           | "if" | "then" | "elif" | "else" | "end" ;
 
 name       = letter { letter | digit | "_" } ;
 letter     = "a" … "z" | "A" … "Z" ;
@@ -87,8 +98,9 @@ proj_key   = prop_ident | digits | string ;
 
 ### Precedence (low → high)
 
-| Level | Operators | Notes |
-|------|-----------|--------|
+| Level | Operators / forms | Notes |
+|------|-------------------|--------|
+| 0 | `if` … `end` | primary (`factor`); bodies are full `expression`s |
 | 1 | `\|` | pipe |
 | 2 | `&&` | binds looser than `\|\|` |
 | 3 | `\|\|` | |
@@ -119,4 +131,6 @@ proj_key   = prop_ident | digits | string ;
 ```
 .[1] | filter(.id > 10 && .age < 20 && (.money > 10 || .gold >= 1))
 .jobs | filter(.active == true) | map({ name: .title, pay: .money })
+if .active then .title else null end
+.jobs[] | if .money > 100 then "senior" elif .money > 50 then "mid" else "junior" end
 ```

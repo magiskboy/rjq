@@ -839,3 +839,67 @@ fn join_split_startswith_endswith() {
     assert_exec_err(&data, ".count | startswith(\"1\")");
     assert_exec_err(&data, ".name | endswith(1)");
 }
+
+#[test]
+fn if_then_else_selects_branch() {
+    let data = sample();
+    assert_ok(
+        &data,
+        r#"if .flag then .name else "no" end"#,
+        JsonValue::string("Alice".to_string()),
+    );
+    assert_ok(
+        &data,
+        r#"if .off then .name else "no" end"#,
+        JsonValue::string("no".to_string()),
+    );
+    // Only JSON `true` is truthy (like filter); null / numbers fall through to else.
+    assert_ok(&data, "if null then 1 else 2 end", JsonValue::number(2.0));
+    assert_ok(&data, "if 1 then 1 else 2 end", JsonValue::number(2.0));
+}
+
+#[test]
+fn if_elif_chain_and_pipe() {
+    let data = sample();
+    assert_ok(
+        &data,
+        r#".jobs[0] | if .money > 100 then "senior" elif .money > 50 then "mid" else "junior" end"#,
+        JsonValue::string("mid".to_string()),
+    );
+    assert_ok(
+        &data,
+        r#".jobs[2] | if .money > 100 then "senior" elif .money > 50 then "mid" else "junior" end"#,
+        JsonValue::string("junior".to_string()),
+    );
+    assert_ok(
+        &data,
+        r#".jobs | map(if .active then .title else null end)"#,
+        JsonValue::array(vec![
+            JsonValue::string("Dev".to_string()),
+            JsonValue::string("QA".to_string()),
+            JsonValue::Null,
+            JsonValue::string("SRE".to_string()),
+        ]),
+    );
+}
+
+#[test]
+fn if_short_circuits_unselected_branches() {
+    let data = sample();
+    // Skipped then-branch must not run (unknown would be UnsupportedOperation).
+    assert_ok(
+        &data,
+        "if false then unknown(1) else 2 end",
+        JsonValue::number(2.0),
+    );
+    assert_ok(
+        &data,
+        r#"if .flag then .name else unknown(1) end"#,
+        JsonValue::string("Alice".to_string()),
+    );
+    assert_ok(
+        &data,
+        "if false then 1 elif true then 2 else unknown(1) end",
+        JsonValue::number(2.0),
+    );
+}
