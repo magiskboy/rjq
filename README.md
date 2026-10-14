@@ -22,6 +22,26 @@ if_else           54.06     104.57 rjq 1.93x faster
 - **Builder straight to the target type** — `JsonBuilder` separates syntax (parser) from representation. Native path builds `JsonValue`; Python path (`PyBuilder`) emits `PyDict` / `PyList` / scalars directly — no intermediate `JsonValue` tree on the `rjson` hot path.
 - **Lazy number parse** — lexer keeps the raw digit span (`JsonNumber` + `IntegerLike` / `FloatLike`). Parse to `i64` / `f64` (or Python `int` / `float` / big `int`) only when a consumer needs a numeric value; `json_dump` can rewrite the original spelling.
 - **SIMD + NEON** — vectorized scans for string specials and non-whitespace: AVX2 on `x86_64`, NEON on Apple Silicon / `aarch64`, with scalar fallback elsewhere.
+- **Rewrite expression (peephole AST)** — with `--optimize`, rewrite the query AST bottom-up until a fixed point (`src/jql/optimizer.rs`). Division/mod by zero and non-literal operands are left unchanged. Rules (also through right-associative pipe chains):
+
+  | Kind | Before | After |
+  |------|--------|-------|
+  | Identity pipe | `. \| x` / `x \| .` | `x` |
+  | Access fuse | `.a \| .b` | `.a.b` |
+  | Access fuse (chain) | `.a \| (.b \| rest)` | `.a.b \| rest` |
+  | Filter fuse | `filter(p) \| filter(q)` | `filter(p && q)` |
+  | Filter fuse (chain) | `filter(p) \| (filter(q) \| rest)` | `filter(p && q) \| rest` |
+  | Map fuse | `map(f) \| map(g)` | `map(f \| g)` |
+  | Map fuse (chain) | `map(f) \| (map(g) \| rest)` | `map(f \| g) \| rest` |
+  | Numeric fold | `1 + 2 * 3` | `7` |
+  | Comparison fold | `1 < 2` / `"a" == "a"` | `true` / `true` |
+  | And absorb | `true && x` / `x && true` | `x` |
+  | And short-circuit | `false && x` | `false` |
+  | Or absorb | `false \|\| x` / `x \|\| false` | `x` |
+  | Or short-circuit | `true \|\| x` | `true` |
+  | If const-true | `if true then a else b end` | `a` |
+  | If const-false | `if false then a else b end` | `b` |
+  | If dead arm | `if false then a elif c then d else e end` | `if c then d else e end` |
 
 ## Build
 
