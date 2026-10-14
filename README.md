@@ -2,17 +2,18 @@
 
 Learning project: JSON parser + jq-like query language, written in Rust.
 
-Median wall time on a ~10 MiB JSON.
+Median wall time on a ~5 MiB JSON.
 
 ![CLI performance: rjq vs jq](benchmark/plot.png)
 
+```
 case             rjq ms      jq ms         relative
 ----------------------------------------------------
 access            50.77      91.43 rjq 1.80x faster
 filter            66.10     128.42 rjq 1.94x faster
 map               72.94     149.26 rjq 2.05x faster
 filter_map        71.06     125.28 rjq 1.76x faster
-
+```
 **Optimization methods**
 
 - **`Cow` for strings (and numbers)** — JSON strings without escapes and number spellings borrow the input buffer (`Cow::Borrowed`); only unescape / `into_owned` allocate. Avoids copying every scalar into a new `String` during lex/parse.
