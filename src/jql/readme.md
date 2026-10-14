@@ -1,117 +1,127 @@
 ## Grammar
 
-```bnf
-<pipeline> ::= <expression>
-             | <expression> <space> "|" <space> <pipeline>
+```ebnf
+(* ── Expressions ───────────────────────────────────────────────────── *)
 
-<expression> ::= <access>
-               | <call>
-               | <object>
+expression = pipe ;
 
-<access> ::= <root_access> 
-           | <access_step>+
+(* Right-associative binary layers; && is outside || (looser). *)
+pipe       = and_expr
+           | and_expr "|" pipe ;
 
-<root_access> ::= "."
+and_expr   = or_expr
+           | or_expr "&&" and_expr ;
 
-<access_step> ::= "." <ident>
-                | "." "\"" <key_chars> "\""
-                | "." "[" <number> "]"
-                | "." "[" "\"" <key_chars> "\"" "]"
+or_expr    = comparison
+           | comparison "||" or_expr ;
 
-<call> ::= <identifier> "(" <expression> ")"
+comparison = numeric
+           | numeric comp_op comparison ;
 
-<filter> ::= "filter" "(" <condition> ")"
+numeric    = term
+           | term add_op numeric ;
 
-<map> ::= "map" "(" <expression> ")"
+term       = factor
+           | factor mul_op term ;
 
-<object> ::= "{" "}"
-           | "{" <object_field> ("," <object_field>)* "}"
+factor     = literal
+           | access
+           | call
+           | object
+           | "(" expression ")" ;
 
-<object_field> ::= <identifier> ":" <expression>
-                 | <string_value> ":" <expression>
+comp_op    = "==" | "!=" | ">" | ">=" | "<" | "<=" ;
+add_op     = "+" | "-" ;
+mul_op     = "*" | "/" | "%" ;
 
-<condition> ::= <comparision>
-              | "("+ <condition> ")"+ <space> <logical_op> <space> <comparision>
+literal    = number | string | boolean | "null" ;
 
-<logical_op> ::= "and" | "or"
+(* Bare name → call with no args; `name()` is invalid. *)
+call       = name
+           | name "(" expression ")" ;
 
-<comparision> ::= <operand> <space> <com_op> <space> <operand>
+object     = "{" [ field { "," field } ] "}" ;
+field      = object_key ":" expression ;
+object_key = name | string ;
 
-<operand> ::= <access> | <literal>
+(* ── Lexical forms ─────────────────────────────────────────────────── *)
 
-<com_op> ::= "==" | ">=" | "<=" | ">" | "<" | "!="
+name       = letter { letter | digit | "_" } ;
+letter     = "a" … "z" | "A" … "Z" ;
+digit      = "0" … "9" ;
 
-<literal> ::= <string_value> | <boolean> | <number>
+boolean    = "true" | "false" ;
 
-<number> ::= ["-"] <digits> ["." <digits>] [("e" | "E") ["+" | "-"] <digits>]
+number     = [ "-" ] digits [ "." digits ] [ exponent ] ;
+digits     = digit { digit } ;
+exponent   = ( "e" | "E" ) [ "+" | "-" ] digits ;
 
-<boolean> ::= "true" | "false"
+string     = '"' { key_char } '"' ;
+key_char   = (* any character except '"' *) ;
 
-<ident> ::= ([a-z] | [A-Z] | "_") ([a-z] | [A-Z] | [0-9] | "_")*
+(* Access path is one token starting with '.'. Whitespace is " " only. *)
+access     = "." [ path ] ;
 
-<proj_key> ::= <ident> | <digits> | <string_value>
+(* ── Access path (after the leading '.') ───────────────────────────── *)
 
-<null> ::= "null"
+path       = head { cont } ;
 
-<space> ::= " "
+head       = prop [ projection ]
+           | index [ projection ]
+           | projection ;                      (* .{a,b} *)
 
-<string_value> ::= "\"" <key_chars> "\""
+(* After `}` only `.…` may follow; after prop/index, `.` / `[` / `{` ok. *)
+cont       = "." prop [ projection ]
+           | index [ projection ]
+           | projection
+           | "." projection ;
 
-<key_chars> ::= any chars except '"'
+prop       = prop_ident | string ;
+prop_ident = ( letter | "_" ) { letter | digit | "_" } ;
+
+index      = "[" index_spec "]" ;
+index_spec =                                   (* empty → all elements *)
+           | digits                            (* single index *)
+           | digits ":" digits                 (* half-open [start:end) *)
+           | digits "," digits { "," digits }  (* multiple indices *)
+           | string ;                          (* bracket key → property *)
+
+projection = "{" [ proj_key { "," proj_key } ] "}" ;
+proj_key   = prop_ident | digits | string ;
 ```
 
-Grammar of access identifier
+### Precedence (low → high)
+
+| Level | Operators | Notes |
+|------|-----------|--------|
+| 1 | `\|` | pipe |
+| 2 | `&&` | binds looser than `\|\|` |
+| 3 | `\|\|` | |
+| 4 | `==` `!=` `>` `>=` `<` `<=` | |
+| 5 | `+` `-` | |
+| 6 | `*` `/` `%` | |
+
+### Access path examples
 
 ```
-.jobs      -> List<Job>
-.jobs[1]   -> Job
-.jobs[]    -> Iterator<Job>
-.jobs[1,2] -> Iterator<Job>
-.jobs[1:3] -> Iterator<Job>
-
-."kebab-case" / .["x-y"] / ."with space"  -> key with -, space, unicode
-._id                                      -> underscore key
-
-.person{}           -> Iterator<Pair>
-.person{}@keys      -> Iterator<Pair[0]>
-.person{}@values    -> Iterator<Pair[1]>
-.person{name,age}   -> Iterator<Pair if Pair[0] in [name, age]>
-.person{_id,name2,0,"a-b"} -> projection keys: _, digits, quoted
-
-.jobs[]{}  -> Iterator<Job>
-.jobs[]{title,description} -> Iterator<Pair if Pair[0] in [title, description]>
+.                              → root (identity)
+.jobs                          → property
+.jobs[1]                       → index
+.jobs[]                        → all elements
+.jobs[1,2]                     → multiple indices
+.jobs[1:3]                     → range [1:3)
+."kebab-case" / .["x-y"]       → quoted / bracket string key
+._id                           → underscore property
+.person{}                      → project all keys
+.person{name,age}              → project selected keys
+.person{_id,name2,0,"a-b"}     → projection keys: ident / digits / string
+.jobs[]{title,description}     → index-all then project
+.company.teams[0].name         → chained steps
 ```
 
 ## Examples
+
 ```
 .[1] | filter(.id > 10 && .age < 20 && (.money > 10 || .gold >= 1))
-```
-
-## Parser
-
-```
-Pipeline
-├── Access
-│   └── Index(1)
-│
-└── Call("filter")
-    │
-    └── And
-        ├── And
-        │   ├── GreaterThan
-        │   │   ├── Access("id")
-        │   │   └── 10
-        │   │
-        │   └── LessThan
-        │       ├── Access("age")
-        │       └── 20
-        │
-        └── Or
-            ├── GreaterThan
-            │   ├── Access("money")
-            │   └── 10
-            │
-            └── GreaterThanOrEqual
-                ├── Access("gold")
-                └── 1
+.jobs | filter(.active == true) | map({ name: .title, pay: .money })
 ```
