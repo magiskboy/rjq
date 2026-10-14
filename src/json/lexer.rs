@@ -18,7 +18,15 @@ use crate::{Location, Span};
 //      zero-copy; the cursor never discards consumed bytes.
 //   3. SIMD byte scanning lives in `crate::json::scan`; `scan::scalar` is the
 //      semantic spec that every SIMD backend must match.
+//   4. Structural punctuation (`{}[]:,`) is not tokenized: the parser peeks and
+//      expects those bytes directly via [`peek_byte`] / [`bump_n`].
 // TODO(P2): document the fused-scalar/number-scan invariants here once P2 lands.
+
+/// True for JSON structural punctuation that the parser expects as raw bytes.
+#[inline]
+pub(crate) fn is_structural(b: u8) -> bool {
+    matches!(b, b'{' | b'}' | b'[' | b']' | b':' | b',')
+}
 
 /// True for the escape character following a backslash in a two-char escape
 /// (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`).
@@ -46,17 +54,27 @@ impl<'a> Lexer<'a> {
         Self::from_slice(source.as_bytes())
     }
 
+    /// Lex value tokens only. Structural punctuation is skipped (not emitted).
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn tokenize(source: &'a str) -> Result<Vec<JsonToken<'a>>, JsonError> {
         let mut lexer = Self::from_str(source);
         let mut tokens: Vec<JsonToken<'a>> = vec![];
 
         loop {
-            let token = lexer.next_token()?;
-            match token.kind {
-                JsonTokenKind::Stop => break,
-                JsonTokenKind::Whitespace => continue,
-                _ => tokens.push(token),
+            lexer.skip_whitespace();
+            match lexer.peek_byte() {
+                None => break,
+                Some(b) if is_structural(b) => {
+                    lexer.bump_n(1);
+                }
+                Some(_) => {
+                    let token = lexer.next_token()?;
+                    match token.kind {
+                        JsonTokenKind::Stop => break,
+                        JsonTokenKind::Whitespace => continue,
+                        _ => tokens.push(token),
+                    }
+                }
             }
         }
 
@@ -76,12 +94,31 @@ impl<'a> Lexer<'a> {
         // Slice-backed lexer never discards: borrowed string lexemes alias the input, avoid dangle
     }
 
+    #[inline]
+    pub fn peek_byte(&self) -> Option<u8> {
+        self.source.peek_byte()
+    }
+
+    #[inline]
+    pub fn bump_n(&mut self, n: usize) {
+        self.source.bump_n(n);
+    }
+
+    /// Skip a run of JSON whitespace without producing a token.
+    pub fn skip_whitespace(&mut self) {
+        let _ = self.bump_whitespace();
+    }
+
     /// Build an error, deriving line/column from the span start lazily.
     fn error_at(&self, kind: JsonErrorKind, span: Span) -> JsonError {
         let location = self.source.location_at(span.start);
         JsonError::at(kind, span, location)
     }
 
+    /// Lex the next value token (string / number / literal), whitespace, or EOF.
+    ///
+    /// Structural punctuation must be handled by the caller via [`peek_byte`] /
+    /// [`bump_n`]; encountering it here is reported as [`InvalidCharacter`].
     pub fn next_token(&mut self) -> Result<JsonToken<'a>, JsonError> {
         let pos = self.source.position();
 
@@ -96,12 +133,6 @@ impl<'a> Lexer<'a> {
         };
 
         match b {
-            b'{' => self.bump_simple(JsonTokenKind::LBrace),
-            b'}' => self.bump_simple(JsonTokenKind::RBrace),
-            b'[' => self.bump_simple(JsonTokenKind::LBracket),
-            b']' => self.bump_simple(JsonTokenKind::RBracket),
-            b':' => self.bump_simple(JsonTokenKind::Colon),
-            b',' => self.bump_simple(JsonTokenKind::Comma),
             b' ' | b'\n' | b'\r' | b'\t' => self.bump_whitespace(),
             b'"' => self.parse_string(),
             b't' => self.parse_literal(JsonTokenKind::True, "true"),
@@ -120,34 +151,6 @@ impl<'a> Lexer<'a> {
                 ))
             }
         }
-    }
-
-    pub fn next_significant(&mut self) -> Result<JsonToken<'a>, JsonError> {
-        loop {
-            let token = self.next_token()?;
-            match token.kind {
-                JsonTokenKind::Whitespace => {
-                    self.discard_consumed();
-                    continue;
-                }
-                _ => {
-                    self.discard_consumed();
-                    return Ok(token);
-                }
-            }
-        }
-    }
-
-    fn bump_simple(&mut self, kind: JsonTokenKind) -> Result<JsonToken<'a>, JsonError> {
-        let start = self.source.position();
-        self.source.bump_n(1);
-        Ok(JsonToken::simple(
-            kind,
-            Span {
-                start,
-                end: self.source.position(),
-            },
-        ))
     }
 
     /// Consume a run of JSON whitespace. Uses AVX2/NEON byte-scan when available;

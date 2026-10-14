@@ -39,23 +39,11 @@ fn assert_kinds_spans(source: &str, expected: &[(JsonTokenKind, usize, usize)]) 
 }
 
 #[test]
-fn structural_characters() {
+fn structural_characters_are_not_tokens() {
+    // Punctuation is expected as raw bytes by the parser, not lexed.
     let input: [&str; 6] = ["{", "}", "[", "]", ":", ","];
-    let expected: [JsonTokenKind; 6] = [
-        JsonTokenKind::LBrace,
-        JsonTokenKind::RBrace,
-        JsonTokenKind::LBracket,
-        JsonTokenKind::RBracket,
-        JsonTokenKind::Colon,
-        JsonTokenKind::Comma,
-    ];
-    for (s, kind) in input.iter().zip(expected.iter()) {
-        assert_eq!(
-            run(s),
-            Ok(vec![tok(kind.clone(), 0, s.len())]),
-            "structural {:?}",
-            s
-        );
+    for s in input {
+        assert_eq!(run(s), Ok(vec![]), "structural {:?}", s);
     }
 }
 
@@ -140,11 +128,11 @@ fn strings_raw_unicode() {
 
 #[test]
 fn unicode_string_keeps_following_byte_spans() {
+    // Structural bytes are skipped by tokenize; value spans stay byte-accurate.
     assert_kinds_spans(
         "\"é\",1",
         &[
             (JsonTokenKind::String, 0, 4),
-            (JsonTokenKind::Comma, 4, 5),
             (JsonTokenKind::Number, 5, 6),
         ],
     );
@@ -152,22 +140,12 @@ fn unicode_string_keeps_following_byte_spans() {
     assert_kinds_spans(
         "{\"a\":\"é\"}",
         &[
-            (JsonTokenKind::LBrace, 0, 1),
             (JsonTokenKind::String, 1, 4),
-            (JsonTokenKind::Colon, 4, 5),
             (JsonTokenKind::String, 5, 9),
-            (JsonTokenKind::RBrace, 9, 10),
         ],
     );
 
-    assert_kinds_spans(
-        "[\"🙂\"]",
-        &[
-            (JsonTokenKind::LBracket, 0, 1),
-            (JsonTokenKind::String, 1, 7),
-            (JsonTokenKind::RBracket, 7, 8),
-        ],
-    );
+    assert_kinds_spans("[\"🙂\"]", &[(JsonTokenKind::String, 1, 7)]);
 }
 
 #[test]
@@ -259,14 +237,10 @@ fn numbers_invalid_are_errors() {
 
 #[test]
 fn number_then_structural() {
-    let cases: [(&str, &[JsonTokenKind]); 3] = [
-        ("10,", &[JsonTokenKind::Number, JsonTokenKind::Comma]),
-        ("10]", &[JsonTokenKind::Number, JsonTokenKind::RBracket]),
-        ("10}", &[JsonTokenKind::Number, JsonTokenKind::RBrace]),
-    ];
-    for (s, expected) in cases {
+    let cases: [&str; 3] = ["10,", "10]", "10}"];
+    for s in cases {
         let tokens = run(s).expect("should lex");
-        assert_eq!(kinds(&tokens), expected, "source {:?}", s);
+        assert_eq!(kinds(&tokens), vec![JsonTokenKind::Number], "source {:?}", s);
         assert_eq!(tokens[0].span, Span { start: 0, end: 2 });
     }
 }
@@ -278,19 +252,12 @@ fn array_tokens() {
     assert_eq!(
         kinds(&tokens),
         vec![
-            JsonTokenKind::LBracket,
             JsonTokenKind::Number,
-            JsonTokenKind::Comma,
             JsonTokenKind::Number,
-            JsonTokenKind::Comma,
             JsonTokenKind::True,
-            JsonTokenKind::Comma,
             JsonTokenKind::False,
-            JsonTokenKind::Comma,
             JsonTokenKind::Null,
-            JsonTokenKind::Comma,
             JsonTokenKind::String,
-            JsonTokenKind::RBracket,
         ]
     );
 }
@@ -302,15 +269,10 @@ fn object_tokens() {
     assert_eq!(
         kinds(&tokens),
         vec![
-            JsonTokenKind::LBrace,
             JsonTokenKind::String,
-            JsonTokenKind::Colon,
             JsonTokenKind::Number,
-            JsonTokenKind::Comma,
             JsonTokenKind::String,
-            JsonTokenKind::Colon,
             JsonTokenKind::True,
-            JsonTokenKind::RBrace,
         ]
     );
 }
@@ -322,19 +284,10 @@ fn nested_structure_tokens() {
     assert_eq!(
         kinds(&tokens),
         vec![
-            JsonTokenKind::LBrace,
             JsonTokenKind::String,
-            JsonTokenKind::Colon,
-            JsonTokenKind::LBracket,
             JsonTokenKind::Number,
-            JsonTokenKind::Comma,
-            JsonTokenKind::LBrace,
             JsonTokenKind::String,
-            JsonTokenKind::Colon,
             JsonTokenKind::Null,
-            JsonTokenKind::RBrace,
-            JsonTokenKind::RBracket,
-            JsonTokenKind::RBrace,
         ]
     );
 }

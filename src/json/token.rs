@@ -3,19 +3,17 @@ use crate::json::number::JsonNumber;
 use std::borrow::Cow;
 use std::fmt::Display;
 
+/// Lexical tokens produced by the JSON lexer.
+///
+/// Structural punctuation (`{}[]:,`) is intentionally absent: the parser expects
+/// those bytes directly from the cursor rather than materializing one-byte tokens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JsonTokenKind {
-    LBrace,
-    RBrace,
-    LBracket,
-    RBracket,
     String,
     Number,
     True,
     False,
     Null,
-    Colon,
-    Comma,
     Whitespace,
     Stop,
 }
@@ -23,17 +21,11 @@ pub enum JsonTokenKind {
 impl Display for JsonTokenKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            JsonTokenKind::LBrace => write!(f, "LBrace"),
-            JsonTokenKind::RBrace => write!(f, "RBrace"),
-            JsonTokenKind::LBracket => write!(f, "LBracket"),
-            JsonTokenKind::RBracket => write!(f, "RBracket"),
             JsonTokenKind::String => write!(f, "String"),
             JsonTokenKind::Number => write!(f, "Number"),
             JsonTokenKind::True => write!(f, "True"),
             JsonTokenKind::False => write!(f, "False"),
             JsonTokenKind::Null => write!(f, "Null"),
-            JsonTokenKind::Colon => write!(f, "Colon"),
-            JsonTokenKind::Comma => write!(f, "Comma"),
             JsonTokenKind::Whitespace => write!(f, "Whitespace"),
             JsonTokenKind::Stop => write!(f, "Stop"),
         }
@@ -43,17 +35,11 @@ impl Display for JsonTokenKind {
 impl JsonTokenKind {
     pub(crate) fn syntax_name(&self) -> &'static str {
         match self {
-            JsonTokenKind::LBrace => "'{'",
-            JsonTokenKind::RBrace => "'}'",
-            JsonTokenKind::LBracket => "'['",
-            JsonTokenKind::RBracket => "']'",
             JsonTokenKind::String => "string",
             JsonTokenKind::Number => "number",
             JsonTokenKind::True => "'true'",
             JsonTokenKind::False => "'false'",
             JsonTokenKind::Null => "'null'",
-            JsonTokenKind::Colon => "':'",
-            JsonTokenKind::Comma => "','",
             JsonTokenKind::Whitespace => "whitespace",
             JsonTokenKind::Stop => "end",
         }

@@ -6,12 +6,12 @@ Median wall time on a ~10 MiB JSON.
 
 ![CLI performance: rjq vs jq](benchmark/plot.png)
 
-| Case | rjq | jq | Relative |
-|---|---:|---:|---|
-| access | 55.5 ms | 93.0 ms | rjq **1.68×** faster |
-| filter | 70.7 ms | 129.3 ms | rjq **1.83×** faster |
-| map | 77.6 ms | 151.3 ms | rjq **1.95×** faster |
-| filter_map | 75.9 ms | 125.0 ms | rjq **1.65×** faster |
+case             rjq ms      jq ms         relative
+----------------------------------------------------
+access            50.77      91.43 rjq 1.80x faster
+filter            66.10     128.42 rjq 1.94x faster
+map               72.94     149.26 rjq 2.05x faster
+filter_map        71.06     125.28 rjq 1.76x faster
 
 **Optimization methods**
 
