@@ -3,7 +3,7 @@ use crate::jql::{
     token::{JqlToken, JqlTokenKind},
 };
 
-#[derive(Debug, Clone, Eq, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd)]
 pub enum JqlBinaryKind {
     And,
     Or,
@@ -34,7 +34,7 @@ impl JqlBinaryKind {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd)]
 pub enum JqlNumericKind {
     Plus,
     Subtract,

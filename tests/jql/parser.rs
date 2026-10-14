@@ -78,7 +78,10 @@ fn object<'a>(fields: Vec<(&'a str, JqlAstNode<'a>)>) -> JqlAstNode<'a> {
     }
 }
 
-fn if_expr<'a>(arms: Vec<(JqlAstNode<'a>, JqlAstNode<'a>)>, else_body: JqlAstNode<'a>) -> JqlAstNode<'a> {
+fn if_expr<'a>(
+    arms: Vec<(JqlAstNode<'a>, JqlAstNode<'a>)>,
+    else_body: JqlAstNode<'a>,
+) -> JqlAstNode<'a> {
     JqlAstNode::If {
         arms: arms
             .into_iter()
@@ -122,10 +125,7 @@ fn literals() {
         parse("1e2", &[(JqlTokenKind::Number, "1e2")]),
         Ok(number(100.0))
     );
-    assert_eq!(
-        parse(".[\"x-y\"]", &[]),
-        Ok(access(vec![prop("x-y")]))
-    );
+    assert_eq!(parse(".[\"x-y\"]", &[]), Ok(access(vec![prop("x-y")])));
     assert_eq!(
         parse(".\"kebab-case\"", &[]),
         Ok(access(vec![prop("kebab-case")]))
@@ -304,7 +304,11 @@ fn function_calls() {
         ),
         Ok(call(
             "filter",
-            vec![binary(JqlBinaryKind::Greater, access(vec![prop("id")]), number(10.0))],
+            vec![binary(
+                JqlBinaryKind::Greater,
+                access(vec![prop("id")]),
+                number(10.0)
+            )],
         ))
     );
     assert_eq!(
@@ -440,7 +444,10 @@ fn operators_are_right_associative() {
                 (JqlTokenKind::Identifier, ".c"),
             ],
         ),
-        Ok(pipe(access(vec![prop("a")]), pipe(access(vec![prop("b")]), access(vec![prop("c")]))))
+        Ok(pipe(
+            access(vec![prop("a")]),
+            pipe(access(vec![prop("b")]), access(vec![prop("c")]))
+        ))
     );
 }
 
@@ -581,12 +588,24 @@ fn readme_pipeline() {
 
     let money_or_gold = binary(
         JqlBinaryKind::Or,
-        binary(JqlBinaryKind::Greater, access(vec![prop("money")]), number(10.0)),
-        binary(JqlBinaryKind::GreaterEqual, access(vec![prop("gold")]), number(1.0)),
+        binary(
+            JqlBinaryKind::Greater,
+            access(vec![prop("money")]),
+            number(10.0),
+        ),
+        binary(
+            JqlBinaryKind::GreaterEqual,
+            access(vec![prop("gold")]),
+            number(1.0),
+        ),
     );
     let predicate = binary(
         JqlBinaryKind::And,
-        binary(JqlBinaryKind::Greater, access(vec![prop("id")]), number(10.0)),
+        binary(
+            JqlBinaryKind::Greater,
+            access(vec![prop("id")]),
+            number(10.0),
+        ),
         binary(
             JqlBinaryKind::And,
             binary(JqlBinaryKind::Less, access(vec![prop("age")]), number(20.0)),
@@ -596,7 +615,10 @@ fn readme_pipeline() {
 
     assert_eq!(
         parse(source, &parts),
-        Ok(pipe(access(vec![index(ArrayIndex::Index(1))]), call("filter", vec![predicate])))
+        Ok(pipe(
+            access(vec![index(ArrayIndex::Index(1))]),
+            call("filter", vec![predicate])
+        ))
     );
 }
 
@@ -878,10 +900,7 @@ fn if_as_pipe_operand_and_nested() {
         Ok(if_expr(
             vec![(
                 access(vec![prop("a")]),
-                if_expr(
-                    vec![(access(vec![prop("b")]), number(1.0))],
-                    number(2.0),
-                ),
+                if_expr(vec![(access(vec![prop("b")]), number(1.0))], number(2.0),),
             )],
             number(3.0),
         ))

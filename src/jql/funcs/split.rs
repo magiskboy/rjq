@@ -1,9 +1,5 @@
 use crate::jql::{
-    ast::JqlAstNode,
-    engine::Engine,
-    error::JqlError,
-    funcs::util::type_mismatch,
-    proxy::Proxy,
+    ast::JqlAstNode, engine::Engine, error::JqlError, funcs::util::type_mismatch, proxy::Proxy,
 };
 use crate::json::value::JsonValue;
 

@@ -164,9 +164,10 @@ impl JqlParser {
         let mut arms = Vec::new();
 
         loop {
-            let then_pos = Self::find_branch_delim(tokens, i, &[JqlTokenKind::Then]).ok_or_else(
-                || Self::missing_branch_delim(JqlTokenKind::Then, tokens, i, if_token.span, source),
-            )?;
+            let then_pos =
+                Self::find_branch_delim(tokens, i, &[JqlTokenKind::Then]).ok_or_else(|| {
+                    Self::missing_branch_delim(JqlTokenKind::Then, tokens, i, if_token.span, source)
+                })?;
             if then_pos == i {
                 return Err(Self::unexpected_token(
                     ExpectedSyntax::Expression,
@@ -221,9 +222,10 @@ impl JqlParser {
             }
         }
 
-        let end_pos = Self::find_branch_delim(tokens, i, &[JqlTokenKind::End]).ok_or_else(|| {
-            Self::missing_branch_delim(JqlTokenKind::End, tokens, i, if_token.span, source)
-        })?;
+        let end_pos =
+            Self::find_branch_delim(tokens, i, &[JqlTokenKind::End]).ok_or_else(|| {
+                Self::missing_branch_delim(JqlTokenKind::End, tokens, i, if_token.span, source)
+            })?;
         if end_pos == i {
             return Err(Self::unexpected_token(
                 ExpectedSyntax::Expression,
@@ -350,16 +352,16 @@ impl JqlParser {
         })
     }
 
-    fn parse_proj_key<'a>(
-        token: &JqlToken,
-        source: &'a str,
-    ) -> Result<&'a str, JqlError> {
+    fn parse_proj_key<'a>(token: &JqlToken, source: &'a str) -> Result<&'a str, JqlError> {
         match token.kind {
             JqlTokenKind::Identifier => Ok(Self::slice(token, source)),
             JqlTokenKind::String => Ok(Self::string_content(token, source)),
             JqlTokenKind::Number => {
                 let raw = Self::slice(token, source);
-                if raw.contains('.') || raw.contains('e') || raw.contains('E') || raw.starts_with('-')
+                if raw.contains('.')
+                    || raw.contains('e')
+                    || raw.contains('E')
+                    || raw.starts_with('-')
                 {
                     return Err(Self::unexpected_token(
                         ExpectedSyntax::Token(JqlTokenKind::Identifier),
@@ -445,13 +447,15 @@ impl JqlParser {
         }
 
         if tokens.len() == 1 && tokens[0].kind == JqlTokenKind::String {
-            return Ok(AccessStep::Property(Self::string_content(&tokens[0], source)));
+            return Ok(AccessStep::Property(Self::string_content(
+                &tokens[0], source,
+            )));
         }
 
         if tokens.len() == 1 && tokens[0].kind == JqlTokenKind::Number {
-            return Ok(AccessStep::Index(ArrayIndex::Index(Self::parse_usize_index(
-                &tokens[0], source,
-            )?)));
+            return Ok(AccessStep::Index(ArrayIndex::Index(
+                Self::parse_usize_index(&tokens[0], source)?,
+            )));
         }
 
         if tokens.len() == 3

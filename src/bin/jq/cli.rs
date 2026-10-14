@@ -2,7 +2,7 @@ use std::{fs::File, io::Read, str::FromStr};
 
 use crate::error::AppError;
 use crate::render;
-use rs_jq::jql::jql_execute;
+use rs_jq::jql::jql_execute_opt;
 use rs_jq::json::{json_load, value::JsonValue};
 use structopt::StructOpt;
 
@@ -41,6 +41,10 @@ struct Opts {
     /// Disable colored output (also respects `NO_COLOR`).
     #[structopt(long = "no-color")]
     no_color: bool,
+
+    /// Run AST peephole optimization before executing the query (default: off).
+    #[structopt(long = "optimize")]
+    optimize: bool,
 }
 
 impl Opts {
@@ -68,7 +72,7 @@ fn load_input(input: &str) -> Result<Box<dyn Read>, AppError> {
 
 fn process(reader: Box<dyn Read>, opts: &Opts) -> Result<JsonValue<'static>, AppError> {
     let json_value = json_load(reader)?;
-    let result = jql_execute(&json_value, &opts.script)?;
+    let result = jql_execute_opt(&json_value, &opts.script, opts.optimize)?;
     Ok(result.into_owned())
 }
 

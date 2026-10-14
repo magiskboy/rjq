@@ -2,9 +2,11 @@ use std::cmp::Ordering;
 
 use crate::{
     jql::{
-        ast::{AccessStep, IfArm, JqlAstNode, JqlBinaryKind, JqlNumericKind, ObjectField, ObjectKey},
+        ast::{
+            AccessStep, IfArm, JqlAstNode, JqlBinaryKind, JqlNumericKind, ObjectField, ObjectKey,
+        },
         error::{JqlError, JqlErrorKind},
-        funcs,
+        funcs, optimizer,
         proxy::Proxy,
     },
     json::{
@@ -30,8 +32,15 @@ impl Engine {
             JqlAstNode::Binary { kind, left, right } => Self::binary(kind, left, right, value),
             JqlAstNode::Object { fields } => Self::object(value, fields),
             JqlAstNode::If { arms, else_body } => Self::if_expr(value, arms, else_body),
-            _ => Err(op_not_support("ast node")),
+            _ => Err(JqlError::without_span(JqlErrorKind::UnsupportedOperation {
+                op: "ast node".to_string(),
+            })),
         }
+    }
+
+    /// Peephole AST rewrite; see [`optimizer::optimize`].
+    pub fn optimize<'a>(ast: JqlAstNode<'a>) -> JqlAstNode<'a> {
+        optimizer::optimize(ast)
     }
 
     fn literal<'a>(literal: &JqlAstNode<'_>) -> Proxy<'a> {
@@ -111,26 +120,38 @@ impl Engine {
         let right_output = right_proxy.data();
         let result = match kind {
             JqlBinaryKind::And => {
-                left_output.try_as_bool().map_err(json_exec_error)?
-                    && right_output.try_as_bool().map_err(json_exec_error)?
+                left_output.try_as_bool().map_err(Self::json_exec_error)?
+                    && right_output.try_as_bool().map_err(Self::json_exec_error)?
             }
             JqlBinaryKind::Or => {
-                left_output.try_as_bool().map_err(json_exec_error)?
-                    || right_output.try_as_bool().map_err(json_exec_error)?
+                left_output.try_as_bool().map_err(Self::json_exec_error)?
+                    || right_output.try_as_bool().map_err(Self::json_exec_error)?
             }
             JqlBinaryKind::Equal => left_output == right_output,
             JqlBinaryKind::NotEqual => left_output != right_output,
             JqlBinaryKind::Greater => {
-                left_output.try_cmp(right_output).map_err(json_exec_error)? == Ordering::Greater
+                left_output
+                    .try_cmp(right_output)
+                    .map_err(Self::json_exec_error)?
+                    == Ordering::Greater
             }
             JqlBinaryKind::Less => {
-                left_output.try_cmp(right_output).map_err(json_exec_error)? == Ordering::Less
+                left_output
+                    .try_cmp(right_output)
+                    .map_err(Self::json_exec_error)?
+                    == Ordering::Less
             }
             JqlBinaryKind::GreaterEqual => {
-                left_output.try_cmp(right_output).map_err(json_exec_error)? != Ordering::Less
+                left_output
+                    .try_cmp(right_output)
+                    .map_err(Self::json_exec_error)?
+                    != Ordering::Less
             }
             JqlBinaryKind::LessEqual => {
-                left_output.try_cmp(right_output).map_err(json_exec_error)? != Ordering::Greater
+                left_output
+                    .try_cmp(right_output)
+                    .map_err(Self::json_exec_error)?
+                    != Ordering::Greater
             }
         };
         Ok(Proxy::owned(JsonValue::boolean(result)))
@@ -150,8 +171,6 @@ impl Engine {
         Ok(Proxy::owned(JsonValue::object(entries)))
     }
 
-    /// Evaluate `if` / `elif` / `else`: cond is taken only when it yields JSON `true`
-    /// (same truthiness as `filter` / `any` / `all`). Only the chosen branch runs.
     fn if_expr<'a>(
         value: Proxy<'a>,
         arms: &[IfArm<'_>],
@@ -166,14 +185,10 @@ impl Engine {
         }
         Engine::execute(value, else_body)
     }
-}
 
-fn json_exec_error(err: JsonError) -> JqlError {
-    JqlError::from(err)
-}
-
-fn op_not_support(op: &str) -> JqlError {
-    JqlError::without_span(JqlErrorKind::UnsupportedOperation { op: op.to_string() })
+    fn json_exec_error(err: JsonError) -> JqlError {
+        JqlError::from(err)
+    }
 }
 
 #[cfg(test)]

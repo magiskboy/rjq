@@ -74,20 +74,14 @@ fn array_index_zero() {
 
 #[test]
 fn array_all() {
-    assert_eq!(
-        parse(".jobs[]"),
-        vec![prop("jobs"), index(ArrayIndex::All)]
-    );
+    assert_eq!(parse(".jobs[]"), vec![prop("jobs"), index(ArrayIndex::All)]);
 }
 
 #[test]
 fn array_multiple_index() {
     assert_eq!(
         parse(".jobs[1,2]"),
-        vec![
-            prop("jobs"),
-            index(ArrayIndex::MultipleIndex(vec![1, 2])),
-        ]
+        vec![prop("jobs"), index(ArrayIndex::MultipleIndex(vec![1, 2])),]
     );
 }
 
@@ -95,10 +89,7 @@ fn array_multiple_index() {
 fn array_multiple_index_with_zero() {
     assert_eq!(
         parse(".jobs[0,2]"),
-        vec![
-            prop("jobs"),
-            index(ArrayIndex::MultipleIndex(vec![0, 2])),
-        ]
+        vec![prop("jobs"), index(ArrayIndex::MultipleIndex(vec![0, 2])),]
     );
     assert_eq!(
         parse(".jobs[0,1,2]"),
@@ -113,10 +104,7 @@ fn array_multiple_index_with_zero() {
 fn array_range() {
     assert_eq!(
         parse(".jobs[1:3]"),
-        vec![
-            prop("jobs"),
-            index(ArrayIndex::Range { start: 1, end: 3 }),
-        ]
+        vec![prop("jobs"), index(ArrayIndex::Range { start: 1, end: 3 }),]
     );
 }
 
@@ -124,17 +112,11 @@ fn array_range() {
 fn array_range_with_zero() {
     assert_eq!(
         parse(".jobs[0:1]"),
-        vec![
-            prop("jobs"),
-            index(ArrayIndex::Range { start: 0, end: 1 }),
-        ]
+        vec![prop("jobs"), index(ArrayIndex::Range { start: 0, end: 1 }),]
     );
     assert_eq!(
         parse(".jobs[0:0]"),
-        vec![
-            prop("jobs"),
-            index(ArrayIndex::Range { start: 0, end: 0 }),
-        ]
+        vec![prop("jobs"), index(ArrayIndex::Range { start: 0, end: 0 }),]
     );
 }
 

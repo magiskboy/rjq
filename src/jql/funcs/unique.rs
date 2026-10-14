@@ -1,8 +1,4 @@
-use crate::jql::{
-    error::JqlError,
-    funcs::util::type_mismatch_array,
-    proxy::Proxy,
-};
+use crate::jql::{error::JqlError, funcs::util::type_mismatch_array, proxy::Proxy};
 use crate::json::value::JsonValue;
 
 /// Deduplicate array items (deep equality), preserving first-seen order.

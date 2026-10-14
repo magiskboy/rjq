@@ -278,7 +278,9 @@ fn get_array_range_out_of_bounds() {
 fn get_returns_owned_proxy_data() {
     let data = sample();
     let proxy = Proxy::new(&data);
-    let result = proxy.get_steps(&steps(".jobs[1]")).expect("should resolve reference");
+    let result = proxy
+        .get_steps(&steps(".jobs[1]"))
+        .expect("should resolve reference");
     assert_eq!(result.data(), &at(".jobs[1]"));
 }
 

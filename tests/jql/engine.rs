@@ -631,11 +631,7 @@ fn nullary_aggregates_act_on_current_value() {
     assert_ok(&data, ".matrix[0] | min", JsonValue::number(1.0));
     assert_ok(&data, ".matrix[0] | max", JsonValue::number(3.0));
     assert_ok(&data, ".empty.arr | sum", JsonValue::number(0.0));
-    assert_ok(
-        &data,
-        ".jobs | map(.money) | sum",
-        JsonValue::number(175.0),
-    );
+    assert_ok(&data, ".jobs | map(.money) | sum", JsonValue::number(175.0));
     // Option A: path-arg form is rejected
     assert_exec_err(&data, "len(.jobs)");
     assert_exec_err(&data, "sum(.matrix[0])");
@@ -646,8 +642,16 @@ fn nullary_aggregates_act_on_current_value() {
 #[test]
 fn first_last_keys_values_type() {
     let data = sample();
-    assert_ok(&data, ".jobs | first | .title", JsonValue::string("Dev".to_string()));
-    assert_ok(&data, ".jobs | last | .title", JsonValue::string("SRE".to_string()));
+    assert_ok(
+        &data,
+        ".jobs | first | .title",
+        JsonValue::string("Dev".to_string()),
+    );
+    assert_ok(
+        &data,
+        ".jobs | last | .title",
+        JsonValue::string("SRE".to_string()),
+    );
     assert_ok(
         &data,
         ".person | keys",
@@ -675,12 +679,36 @@ fn first_last_keys_values_type() {
             JsonValue::number(1.0),
         ]),
     );
-    assert_ok(&data, ".jobs | type", JsonValue::string("array".to_string()));
-    assert_ok(&data, ".person | type", JsonValue::string("object".to_string()));
-    assert_ok(&data, ".count | type", JsonValue::string("number".to_string()));
-    assert_ok(&data, ".name | type", JsonValue::string("string".to_string()));
-    assert_ok(&data, ".flag | type", JsonValue::string("boolean".to_string()));
-    assert_ok(&data, ".house | type", JsonValue::string("null".to_string()));
+    assert_ok(
+        &data,
+        ".jobs | type",
+        JsonValue::string("array".to_string()),
+    );
+    assert_ok(
+        &data,
+        ".person | type",
+        JsonValue::string("object".to_string()),
+    );
+    assert_ok(
+        &data,
+        ".count | type",
+        JsonValue::string("number".to_string()),
+    );
+    assert_ok(
+        &data,
+        ".name | type",
+        JsonValue::string("string".to_string()),
+    );
+    assert_ok(
+        &data,
+        ".flag | type",
+        JsonValue::string("boolean".to_string()),
+    );
+    assert_ok(
+        &data,
+        ".house | type",
+        JsonValue::string("null".to_string()),
+    );
     assert_exec_err(&data, ".jobs | values");
 }
 
@@ -826,7 +854,11 @@ fn join_split_startswith_endswith() {
         ]),
     );
     assert_ok(&data, ".jobs[0].title | startswith(\"D\")", JsonValue::True);
-    assert_ok(&data, ".jobs[0].title | startswith(\"Q\")", JsonValue::False);
+    assert_ok(
+        &data,
+        ".jobs[0].title | startswith(\"Q\")",
+        JsonValue::False,
+    );
     assert_ok(&data, ".jobs[1].title | endswith(\"A\")", JsonValue::True);
     assert_ok(&data, ".jobs[1].title | endswith(\"v\")", JsonValue::False);
     assert_ok(
@@ -902,4 +934,101 @@ fn if_short_circuits_unselected_branches() {
         "if false then 1 elif true then 2 else unknown(1) end",
         JsonValue::number(2.0),
     );
+}
+
+fn optimize_query(query: &str) -> crate::jql::ast::JqlAstNode<'_> {
+    let ast = jql_parse(query).unwrap_or_else(|e| panic!("parse {query:?}: {e}"));
+    Engine::optimize(ast)
+}
+
+fn execute_opt(
+    data: &JsonValue<'_>,
+    query: &str,
+    optimize: bool,
+) -> Result<JsonValue<'static>, JqlError> {
+    crate::jql::jql_execute_opt(data, query, optimize).map(|v| v.into_owned())
+}
+
+#[test]
+fn optimize_strips_identity_pipes_and_fuses_access() {
+    use crate::jql::ast::{AccessStep, JqlAstNode};
+
+    assert_eq!(
+        optimize_query(". | .jobs | ."),
+        JqlAstNode::Access(vec![AccessStep::Property("jobs")])
+    );
+    assert_eq!(
+        optimize_query(".company | .teams"),
+        JqlAstNode::Access(vec![
+            AccessStep::Property("company"),
+            AccessStep::Property("teams"),
+        ])
+    );
+}
+
+#[test]
+fn optimize_folds_constants_and_boolean_identity() {
+    use crate::jql::ast::JqlAstNode;
+
+    assert_eq!(optimize_query("1 + 2 * 3"), JqlAstNode::Number(7.0));
+    assert_eq!(optimize_query("true && false"), JqlAstNode::Boolean(false));
+    assert_eq!(optimize_query("1 < 2"), JqlAstNode::Boolean(true));
+    assert_eq!(
+        optimize_query("if true then 1 else 2 end"),
+        JqlAstNode::Number(1.0)
+    );
+    assert_eq!(
+        optimize_query("if false then 1 else 2 end"),
+        JqlAstNode::Number(2.0)
+    );
+}
+
+#[test]
+fn optimize_fuses_filter_and_map_chains() {
+    use crate::jql::ast::{JqlAstNode, JqlBinaryKind};
+
+    match optimize_query("filter(.a) | filter(.b)") {
+        JqlAstNode::Call {
+            name: "filter",
+            args,
+        } => {
+            assert_eq!(args.len(), 1);
+            assert!(matches!(
+                &args[0],
+                JqlAstNode::Binary {
+                    kind: JqlBinaryKind::And,
+                    ..
+                }
+            ));
+        }
+        other => panic!("expected fused filter, got {other:?}"),
+    }
+
+    match optimize_query("map(.a) | map(.b)") {
+        JqlAstNode::Call { name: "map", args } => {
+            assert_eq!(args.len(), 1);
+            // `.a | .b` further fuses to a single Access path.
+            assert!(matches!(&args[0], JqlAstNode::Access(steps) if steps.len() == 2));
+        }
+        other => panic!("expected fused map, got {other:?}"),
+    }
+}
+
+#[test]
+fn optimize_preserves_execute_semantics() {
+    let data = sample();
+    let queries = [
+        ".company.teams[0].name",
+        ".jobs | filter(.id > 2) | filter(.active == true) | map(.title)",
+        ".matrix[1] | .[0,2]",
+        "if false then 1 elif true then 2 else 3 end",
+        "1 + 2 * 3",
+    ];
+    for query in queries {
+        let plain =
+            execute_opt(&data, query, false).unwrap_or_else(|e| panic!("plain {query:?}: {e}"));
+        let opt =
+            execute_opt(&data, query, true).unwrap_or_else(|e| panic!("optimized {query:?}: {e}"));
+        assert_eq!(plain, opt, "query {query:?}");
+    }
 }

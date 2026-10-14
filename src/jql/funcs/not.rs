@@ -1,8 +1,4 @@
-use crate::jql::{
-    error::JqlError,
-    funcs::util::type_mismatch,
-    proxy::Proxy,
-};
+use crate::jql::{error::JqlError, funcs::util::type_mismatch, proxy::Proxy};
 use crate::json::value::{JsonLogic, JsonValue};
 
 pub fn call<'a>(value: Proxy<'a>) -> Result<Proxy<'a>, JqlError> {
