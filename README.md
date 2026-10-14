@@ -9,10 +9,10 @@ Median wall time on a ~5 MiB JSON.
 ```
 case             rjq ms      jq ms         relative
 ----------------------------------------------------
-access            50.77      91.43 rjq 1.80x faster
-filter            66.10     128.42 rjq 1.94x faster
-map               72.94     149.26 rjq 2.05x faster
-filter_map        71.06     125.28 rjq 1.76x faster
+access            54.92      93.30 rjq 1.70x faster
+filter            62.51     129.34 rjq 2.07x faster
+map               63.55     149.60 rjq 2.35x faster
+filter_map        68.48     125.35 rjq 1.83x faster
 ```
 **Optimization methods**
 
