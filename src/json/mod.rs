@@ -4,7 +4,7 @@ use crate::json::{error::JsonError, parser::JsonParser, value::JsonValue};
 
 pub mod error;
 pub mod hook;
-pub mod lazy;
+pub mod builder;
 pub(crate) mod escape;
 pub(crate) mod lexer;
 pub mod number;

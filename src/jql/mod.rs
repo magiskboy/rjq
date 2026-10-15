@@ -3,11 +3,7 @@ use crate::{
         ast::JqlAstNode, engine::Engine, error::JqlError, lexer::JqlLexer, need::required_input,
         parser::JqlParser, proxy::Proxy,
     },
-    json::{
-        lazy::LazyJsonValueBuilder,
-        parser::JsonParser,
-        value::JsonValue,
-    },
+    json::{builder::lazy::LazyJsonValueBuilder, parser::JsonParser, value::JsonValue},
 };
 
 pub(crate) mod ast;
