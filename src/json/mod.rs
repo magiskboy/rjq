@@ -10,9 +10,12 @@ pub(crate) mod lexer;
 pub mod number;
 pub(crate) mod parser;
 pub(crate) mod scan;
+pub mod simd;
 pub(crate) mod source;
 pub(crate) mod token;
 pub mod value;
+
+pub use simd::{BlendedBitmasks, SIMDLexer, SIMDParser, StructuralBitmasks, StructuralIndex};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct JsonDumpOptions {

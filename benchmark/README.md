@@ -1,10 +1,8 @@
 # Benchmarks
 
-Two scripts only:
-
 | Script | What |
 |---|---|
-| [`cli.py`](cli.py) | `rjq` vs stock `jq` (process wall time) → table + plot |
+| [`cli.py`](cli.py) | `rjq` (eager / `--simd` / lazy) vs stock `jq` → table + plot |
 | [`python.py`](python.py) | `rjson_load` (bytes) vs `rjson_loads` (str) → table |
 
 ## CLI (`rjq` vs `jq`)
@@ -24,6 +22,8 @@ uv run --with matplotlib python benchmark/cli.py \
   --rjq ./target/release/rjq --jq "$(which jq)" \
   --size-mb 10 --runs 7 --plot benchmark/cli_rjq_vs_jq.png
 ```
+
+Variants per case: **rjq** (eager), **rjq --simd**, **rjq --parse lazy**, **jq**.
 
 Cases: **access**, **filter**, **map**, **filter_map**, **if_else** on nested records.
 

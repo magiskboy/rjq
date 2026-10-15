@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare rjq (eager + lazy) vs stock jq (CLI wall time). Prints a table and writes a plot.
+"""Compare rjq (eager / --simd / lazy) vs stock jq (CLI wall time).
 
   python benchmark/cli.py --rjq ./target/release/rjq --jq $(which jq)
   python benchmark/cli.py --rjq ./target/release/rjq --jq /opt/homebrew/bin/jq --plot out.png
@@ -126,7 +126,8 @@ def bench(cmd: list[str], *, warmup: int, runs: int) -> list[float]:
 
 def write_plot(
     cases: list[str],
-    rjq_ms: list[float],
+    eager_ms: list[float],
+    simd_ms: list[float],
     lazy_ms: list[float],
     jq_ms: list[float],
     out: Path,
@@ -140,17 +141,18 @@ def write_plot(
         sys.exit("matplotlib required for --plot (e.g. uv run --with matplotlib ...)")
 
     x = np.arange(len(cases))
-    width = 0.25
-    fig, ax = plt.subplots(figsize=(11.5, 5.4), dpi=150)
-    ax.bar(x - width, rjq_ms, width, label="rjq", color="#2A6F97", zorder=3)
-    ax.bar(x, lazy_ms, width, label="rjq --parse lazy", color="#2A9D8F", zorder=3)
-    ax.bar(x + width, jq_ms, width, label="jq", color="#E76F51", zorder=3)
+    width = 0.2
+    fig, ax = plt.subplots(figsize=(12.5, 5.4), dpi=150)
+    ax.bar(x - 1.5 * width, eager_ms, width, label="rjq", color="#2A6F97", zorder=3)
+    ax.bar(x - 0.5 * width, simd_ms, width, label="rjq --simd", color="#BC4749", zorder=3)
+    ax.bar(x + 0.5 * width, lazy_ms, width, label="rjq --parse lazy", color="#2A9D8F", zorder=3)
+    ax.bar(x + 1.5 * width, jq_ms, width, label="jq", color="#E76F51", zorder=3)
     ax.set_ylabel("Median wall time (ms)")
     ax.set_xlabel("Query case")
     ax.set_title(f"CLI performance: rjq vs jq\n({size_label})")
     ax.set_xticks(x, cases)
     ax.legend(frameon=False, loc="upper left")
-    ax.set_ylim(0, max(rjq_ms + lazy_ms + jq_ms) * 1.12)
+    ax.set_ylim(0, max(eager_ms + simd_ms + lazy_ms + jq_ms) * 1.12)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
@@ -161,7 +163,7 @@ def write_plot(
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="CLI benchmark: rjq vs jq")
+    p = argparse.ArgumentParser(description="CLI benchmark: rjq (eager/--simd/lazy) vs jq")
     p.add_argument("--rjq", required=True, type=Path, help="path to rjq binary")
     p.add_argument("--jq", required=True, type=Path, help="path to jq binary")
     p.add_argument("--input", type=Path, help="JSON file (default: generate fixture)")
@@ -193,11 +195,13 @@ def main() -> int:
     print(f"rjq   : {rjq}", file=sys.stderr)
     print(f"jq    : {jq}", file=sys.stderr)
 
-    rows: list[tuple[str, float, float, float]] = []  # case, rjq_ms, lazy_ms, jq_ms
+    # case, eager_ms, simd_ms, lazy_ms, jq_ms
+    rows: list[tuple[str, float, float, float, float]] = []
     for case, rjq_script, jq_script in CASES:
         print(f"==> {case}", file=sys.stderr)
         base = [str(rjq), "--input", str(fixture), "--script", rjq_script, "--no-color"]
-        rjq_walls = bench(base, warmup=args.warmup, runs=args.runs)
+        eager_walls = bench(base, warmup=args.warmup, runs=args.runs)
+        simd_walls = bench([*base, "--simd"], warmup=args.warmup, runs=args.runs)
         lazy_walls = bench(
             [*base, "--parse", "lazy"],
             warmup=args.warmup,
@@ -211,7 +215,8 @@ def main() -> int:
         rows.append(
             (
                 case,
-                statistics.median(rjq_walls) * 1000,
+                statistics.median(eager_walls) * 1000,
+                statistics.median(simd_walls) * 1000,
                 statistics.median(lazy_walls) * 1000,
                 statistics.median(jq_walls) * 1000,
             )
@@ -221,19 +226,26 @@ def main() -> int:
         return f"{ms:.2f} ms (x{jq_ms / ms:.2f} jq)"
 
     print()
-    print(f"{'case':<12} {'rjq eager':<22} {'rjq lazy':<22} {'jq ms':>10}")
-    print("-" * 68)
-    for case, eager_ms, lazy_ms, jq_ms in rows:
+    print(
+        f"{'case':<12} {'rjq eager':<22} {'rjq --simd':<22} {'rjq lazy':<22} {'jq ms':>10}"
+    )
+    print("-" * 90)
+    for case, eager_ms, simd_ms, lazy_ms, jq_ms in rows:
         print(
-            f"{case:<12} {fmt_rjq(eager_ms, jq_ms):<22} {fmt_rjq(lazy_ms, jq_ms):<22} {jq_ms:10.2f}"
+            f"{case:<12} "
+            f"{fmt_rjq(eager_ms, jq_ms):<22} "
+            f"{fmt_rjq(simd_ms, jq_ms):<22} "
+            f"{fmt_rjq(lazy_ms, jq_ms):<22} "
+            f"{jq_ms:10.2f}"
         )
 
     if not args.no_plot:
         write_plot(
             [c for c, *_ in rows],
-            [r for _, r, _, _ in rows],
-            [lz for _, _, lz, _ in rows],
-            [j for _, _, _, j in rows],
+            [e for _, e, _, _, _ in rows],
+            [s for _, _, s, _, _ in rows],
+            [lz for _, _, _, lz, _ in rows],
+            [j for _, _, _, _, j in rows],
             args.plot,
             size_label=f"~{size_mib:.0f} MiB nested records",
         )
