@@ -15,12 +15,24 @@ pub enum JsonAtom<'a> {
     String(Cow<'a, str>),
 }
 
+/// Whether the parser should materialize the next object value / array element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseDecision {
+    /// Parse the value and deliver it via [`ParserHookable::on_object_entry`] /
+    /// [`ParserHookable::on_array_element`].
+    Keep,
+    /// Lex/validate the value with `skip_value`, do not materialize or insert it.
+    ///
+    /// For arrays, the parser still advances the element index; the hook may
+    /// push a placeholder (e.g. `null`) if index alignment is required.
+    Skip,
+}
+
 /// Hook into the recursive-descent parser.
 ///
 /// The parser owns syntax (tokens, braces, commas). A [`ParserHookable`]
 /// receives structural events and builds whatever target it wants — a
-/// [`JsonValue`] tree, CPython objects, a tape, or (later) a path-masked /
-/// skip-capable consumer for lazy parse.
+/// [`JsonValue`] tree, CPython objects, or a path-masked lazy tree.
 ///
 /// `Array` / `Object` are in-progress containers; `Value` is the finished form.
 pub trait ParserHookable<'a> {
@@ -47,9 +59,39 @@ pub trait ParserHookable<'a> {
         value: Self::Value,
     ) -> Result<(), Self::Error>;
     fn on_end_object(&mut self, object: Self::Object) -> Result<Self::Value, Self::Error>;
+
+    /// Decide whether to materialize the value for `key` (default: always keep).
+    fn want_object_key(&mut self, _key: &str) -> Result<ParseDecision, Self::Error> {
+        Ok(ParseDecision::Keep)
+    }
+
+    /// Called after a skipped object value (default: no-op).
+    fn on_object_key_skipped(&mut self, _key: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Decide whether to materialize array element `index` (default: always keep).
+    fn want_array_element(&mut self, _index: usize) -> Result<ParseDecision, Self::Error> {
+        Ok(ParseDecision::Keep)
+    }
+
+    /// Called after a skipped array element. Default no-op; lazy hooks may push
+    /// a `null` placeholder so later indices stay aligned.
+    fn on_array_element_skipped(
+        &mut self,
+        _array: &mut Self::Array,
+        _index: usize,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// When true, bytes after the root value are ignored (lazy CLI). Default false.
+    fn accept_trailing_junk(&self) -> bool {
+        false
+    }
 }
 
-/// Hook that materializes the crate's native [`JsonValue`] tree.
+/// Hook that materializes the crate's native [`JsonValue`] tree (eager).
 #[derive(Debug, Default)]
 pub struct JsonValueBuilder;
 

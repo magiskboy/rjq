@@ -4,7 +4,7 @@ use crate::Location;
 use crate::Span;
 use crate::json::{
     error::{ExpectedSyntax, FoundSyntax, JsonError, JsonErrorKind},
-    hook::{JsonAtom, JsonValueBuilder, ParserHookable},
+    hook::{JsonAtom, JsonValueBuilder, ParseDecision, ParserHookable},
     lexer::Lexer,
     token::{JsonLexeme, JsonToken, JsonTokenKind},
     value::JsonValue,
@@ -56,7 +56,9 @@ impl<'a> JsonParser<'a> {
             .into());
         }
         let value = parser.parse_value(hook)?;
-        parser.expect_eof()?;
+        if !hook.accept_trailing_junk() {
+            parser.expect_eof()?;
+        }
         Ok(value)
     }
 }
@@ -184,8 +186,17 @@ impl<'a> JsonParser<'a> {
             };
 
             self.expect_byte(b':')?;
-            let value = self.parse_value(hook)?;
-            hook.on_object_entry(&mut object, key, value)?;
+
+            match hook.want_object_key(key.as_ref())? {
+                ParseDecision::Keep => {
+                    let value = self.parse_value(hook)?;
+                    hook.on_object_entry(&mut object, key, value)?;
+                }
+                ParseDecision::Skip => {
+                    self.skip_value()?;
+                    hook.on_object_key_skipped(key.as_ref())?;
+                }
+            }
 
             self.skip_ws();
             match self.peek() {
@@ -230,6 +241,7 @@ impl<'a> JsonParser<'a> {
             return hook.on_end_array(array);
         }
 
+        let mut index = 0usize;
         loop {
             self.skip_ws();
             match self.peek() {
@@ -244,8 +256,17 @@ impl<'a> JsonParser<'a> {
                 Some(_) => {}
             }
 
-            let value = self.parse_value(hook)?;
-            hook.on_array_element(&mut array, value)?;
+            match hook.want_array_element(index)? {
+                ParseDecision::Keep => {
+                    let value = self.parse_value(hook)?;
+                    hook.on_array_element(&mut array, value)?;
+                }
+                ParseDecision::Skip => {
+                    self.skip_value()?;
+                    hook.on_array_element_skipped(&mut array, index)?;
+                }
+            }
+            index += 1;
 
             self.skip_ws();
             match self.peek() {
@@ -289,6 +310,113 @@ impl<'a> JsonParser<'a> {
             Some(_) => {
                 let token = self.next_value_token()?;
                 self.atom_from_token(hook, token)
+            }
+        }
+    }
+
+    /// Validate and advance past one JSON value without materializing it.
+    pub(crate) fn skip_value(&mut self) -> Result<(), JsonError> {
+        self.skip_ws();
+        match self.peek() {
+            Some(b'{') => self.skip_object(),
+            Some(b'[') => self.skip_array(),
+            None => Err(self.eof_error(ExpectedSyntax::Value)),
+            Some(b) if !Self::starts_value(b) => {
+                Err(self.unexpected(ExpectedSyntax::Value, FoundSyntax::Byte(b)))
+            }
+            Some(_) => {
+                let _ = self.next_value_token()?;
+                Ok(())
+            }
+        }
+    }
+
+    fn skip_object(&mut self) -> Result<(), JsonError> {
+        self.expect_byte(b'{')?;
+        self.skip_ws();
+        if self.peek() == Some(b'}') {
+            self.bump_byte();
+            return Ok(());
+        }
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                Some(b'"') => {
+                    let token = self.next_value_token()?;
+                    if token.kind != JsonTokenKind::String {
+                        return Err(self.error(
+                            JsonErrorKind::UnexpectedToken {
+                                expected: ExpectedSyntax::Token(JsonTokenKind::String),
+                                found: FoundSyntax::Token(token.kind),
+                            },
+                            token.span,
+                        ));
+                    }
+                }
+                None => return Err(self.eof_error(ExpectedSyntax::Byte(b'}'))),
+                Some(b) => {
+                    return Err(self.unexpected(
+                        ExpectedSyntax::Token(JsonTokenKind::String),
+                        FoundSyntax::Byte(b),
+                    ));
+                }
+            }
+            self.expect_byte(b':')?;
+            self.skip_value()?;
+            self.skip_ws();
+            match self.peek() {
+                Some(b',') => {
+                    self.bump_byte();
+                    self.skip_ws();
+                    if self.peek() == Some(b'}') {
+                        return Err(self.unexpected(
+                            ExpectedSyntax::Token(JsonTokenKind::String),
+                            FoundSyntax::Byte(b'}'),
+                        ));
+                    }
+                    continue;
+                }
+                Some(b'}') => {
+                    self.bump_byte();
+                    return Ok(());
+                }
+                None => return Err(self.eof_error(ExpectedSyntax::Byte(b'}'))),
+                Some(b) => {
+                    return Err(self.unexpected(ExpectedSyntax::Byte(b'}'), FoundSyntax::Byte(b)));
+                }
+            }
+        }
+    }
+
+    fn skip_array(&mut self) -> Result<(), JsonError> {
+        self.expect_byte(b'[')?;
+        self.skip_ws();
+        if self.peek() == Some(b']') {
+            self.bump_byte();
+            return Ok(());
+        }
+        loop {
+            self.skip_value()?;
+            self.skip_ws();
+            match self.peek() {
+                Some(b',') => {
+                    self.bump_byte();
+                    self.skip_ws();
+                    if self.peek() == Some(b']') {
+                        return Err(
+                            self.unexpected(ExpectedSyntax::Value, FoundSyntax::Byte(b']'))
+                        );
+                    }
+                    continue;
+                }
+                Some(b']') => {
+                    self.bump_byte();
+                    return Ok(());
+                }
+                None => return Err(self.eof_error(ExpectedSyntax::Byte(b']'))),
+                Some(b) => {
+                    return Err(self.unexpected(ExpectedSyntax::Byte(b']'), FoundSyntax::Byte(b)));
+                }
             }
         }
     }

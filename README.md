@@ -7,19 +7,19 @@ Median wall time on a ~5 MiB JSON.
 ![CLI performance: rjq vs jq](benchmark/plot.png)
 
 ```
-case             rjq ms      jq ms         relative
-----------------------------------------------------
-access            51.30      91.63 rjq 1.79x faster
-filter            58.50     128.83 rjq 2.20x faster
-map               60.26     150.45 rjq 2.50x faster
-filter_map        64.50     125.59 rjq 1.95x faster
-if_else           54.06     104.57 rjq 1.93x faster
+case         rjq eager              rjq lazy                    jq ms
+--------------------------------------------------------------------
+access       50.98 ms (x1.81 jq)    27.30 ms (x3.38 jq)         92.29
+filter       58.57 ms (x2.17 jq)    52.51 ms (x2.42 jq)        126.87
+map          60.53 ms (x2.55 jq)    56.65 ms (x2.73 jq)        154.43
+filter_map   64.77 ms (x1.89 jq)    50.01 ms (x2.45 jq)        122.61
+if_else      54.16 ms (x1.90 jq)    32.21 ms (x3.19 jq)        102.67
 ```
 **Optimization methods**
 
 - **`Cow` for strings (and numbers)** — JSON strings without escapes and number spellings borrow the input buffer (`Cow::Borrowed`); only unescape / `into_owned` allocate. Avoids copying every scalar into a new `String` during lex/parse.
 - **JQL `Proxy` lazy materialize** — engine intermediates are `Borrowed` / `Shared(Rc)` / `Owned` instead of deep-cloning between ops. Access and element iteration stay zero-copy on the input document; fan-out (`binary` / `object`) shares owned trees; new arrays/objects allocate only when the op builds a new shape; `into_owned` stays at CLI / `'static` boundaries.
-- **`ParserHookable`** — parser owns syntax; hooks receive structural events (`on_atom`, `on_begin_array`, …). `JsonValueBuilder` builds the native tree; `PyBuilder` emits `PyDict` / `PyList` / scalars directly — no intermediate `JsonValue` on the `rjson` hot path. Same hook surface can later drive lazy / path-masked parse.
+- **`ParserHookable`** — parser owns syntax; hooks receive structural events (`on_atom`, `want_object_key`, …). `JsonValueBuilder` is eager (`rjq --parse eager`, default); `LazyJsonValueBuilder` (`rjq --parse lazy`) materializes only paths required by the script (expression analyzed first; trailing junk allowed); `PyBuilder` emits CPython objects directly.
 - **Lazy number parse** — lexer keeps the raw digit span (`JsonNumber` + `IntegerLike` / `FloatLike`). Parse to `i64` / `f64` (or Python `int` / `float` / big `int`) only when a consumer needs a numeric value; `json_dump` can rewrite the original spelling.
 - **SIMD + NEON** — vectorized scans for string specials and non-whitespace: AVX2 on `x86_64`, NEON on Apple Silicon / `aarch64`, with scalar fallback elsewhere.
 - **Rewrite expression (peephole AST)** — with `--optimize`, rewrite the query AST bottom-up until a fixed point (`src/jql/optimizer.rs`). Division/mod by zero and non-literal operands are left unchanged. Rules (also through right-associative pipe chains):

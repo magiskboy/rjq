@@ -2,7 +2,7 @@ use std::{fs::File, io::Read, str::FromStr};
 
 use crate::error::AppError;
 use crate::render;
-use rs_jq::jql::jql_execute_opt;
+use rs_jq::jql::{jql_execute_lazy, jql_execute_opt};
 use rs_jq::json::{json_load, value::JsonValue};
 use structopt::StructOpt;
 
@@ -21,6 +21,26 @@ impl FromStr for InputFormat {
             "auto" => Ok(InputFormat::AUTO),
             other => Err(AppError::InvalidFormat(format!(
                 "invalid format \"{other}\", expected json or auto"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParseMode {
+    Eager,
+    Lazy,
+}
+
+impl FromStr for ParseMode {
+    type Err = AppError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "eager" => Ok(ParseMode::Eager),
+            "lazy" => Ok(ParseMode::Lazy),
+            other => Err(AppError::InvalidFormat(format!(
+                "invalid parse mode \"{other}\", expected eager or lazy"
             ))),
         }
     }
@@ -45,6 +65,10 @@ struct Opts {
     /// Run AST peephole optimization before executing the query (default: off).
     #[structopt(long = "optimize")]
     optimize: bool,
+
+    /// JSON parse strategy: `eager` (default, full DOM) or `lazy` (path-guided).
+    #[structopt(long = "parse", default_value = "eager")]
+    parse: ParseMode,
 }
 
 impl Opts {
@@ -70,10 +94,24 @@ fn load_input(input: &str) -> Result<Box<dyn Read>, AppError> {
     }
 }
 
-fn process(reader: Box<dyn Read>, opts: &Opts) -> Result<JsonValue<'static>, AppError> {
-    let json_value = json_load(reader)?;
-    let result = jql_execute_opt(&json_value, &opts.script, opts.optimize)?;
-    Ok(result.into_owned())
+fn process(mut reader: Box<dyn Read>, opts: &Opts) -> Result<JsonValue<'static>, AppError> {
+    match opts.parse {
+        ParseMode::Lazy => {
+            let mut buf = Vec::new();
+            reader
+                .read_to_end(&mut buf)
+                .map_err(|source| AppError::Io {
+                    path: None,
+                    source,
+                })?;
+            Ok(jql_execute_lazy(&buf, &opts.script, opts.optimize)?)
+        }
+        ParseMode::Eager => {
+            let json_value = json_load(reader)?;
+            let result = jql_execute_opt(&json_value, &opts.script, opts.optimize)?;
+            Ok(result.into_owned())
+        }
+    }
 }
 
 pub fn execute() -> Result<(), AppError> {

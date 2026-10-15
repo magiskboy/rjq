@@ -1,9 +1,13 @@
 use crate::{
     jql::{
-        ast::JqlAstNode, engine::Engine, error::JqlError, lexer::JqlLexer, parser::JqlParser,
-        proxy::Proxy,
+        ast::JqlAstNode, engine::Engine, error::JqlError, lexer::JqlLexer, need::required_input,
+        parser::JqlParser, proxy::Proxy,
     },
-    json::value::JsonValue,
+    json::{
+        lazy::LazyJsonValueBuilder,
+        parser::JsonParser,
+        value::JsonValue,
+    },
 };
 
 pub(crate) mod ast;
@@ -11,6 +15,7 @@ pub(crate) mod engine;
 pub mod error;
 pub(crate) mod funcs;
 pub(crate) mod lexer;
+pub(crate) mod need;
 pub(crate) mod optimizer;
 pub(crate) mod parser;
 pub(crate) mod proxy;
@@ -41,6 +46,24 @@ pub fn jql_execute_opt<'a>(
     Ok(result.into_value())
 }
 
+/// Parse `data` with [`LazyJsonValueBuilder`] guided by `query`, then run the
+/// **unchanged** engine. Expression is analyzed before JSON bytes are read.
+pub fn jql_execute_lazy(
+    data: &[u8],
+    query: &str,
+    optimize: bool,
+) -> Result<JsonValue<'static>, JqlError> {
+    let mut ast = jql_parse(query)?;
+    if optimize {
+        ast = Engine::optimize(ast);
+    }
+    let need = required_input(&ast);
+    let mut hook = LazyJsonValueBuilder::new(need);
+    let value = JsonParser::parse_slice_with(data, &mut hook)?;
+    let result = Engine::execute(Proxy::new(&value), &ast)?;
+    Ok(result.into_value().into_owned())
+}
+
 #[cfg(test)]
 #[path = "../../tests/jql/fixture.rs"]
 pub(crate) mod fixture;
@@ -52,3 +75,7 @@ mod access_tests;
 #[cfg(test)]
 #[path = "../../tests/jql/e2e.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/jql/lazy.rs"]
+mod lazy_tests;
