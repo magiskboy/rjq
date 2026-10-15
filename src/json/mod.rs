@@ -158,7 +158,7 @@ fn write_json_string(writer: &mut impl std::io::Write, value: &str) -> std::io::
     for ch in value.chars() {
         match ch {
             '"' => writer.write_all(br#"\""#)?,
-            '\\' => writer.write_all(br"\")?,
+            '\\' => writer.write_all(br"\\")?,
             '\n' => writer.write_all(br"\n")?,
             '\r' => writer.write_all(br"\r")?,
             '\t' => writer.write_all(br"\t")?,

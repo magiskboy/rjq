@@ -14,6 +14,11 @@ name = "rjq"
 path = "src/bin/jq/main.rs"
 required-features = ["cli"]
 
+[[test]]
+name = "suite_e2e"
+path = "tests/suite_e2e.rs"
+required-features = ["cli"]
+
 [features]
 default = []
 cli = ["dep:structopt"]
