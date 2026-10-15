@@ -1,7 +1,7 @@
 //! Derive a JSON [`Need`](crate::json::lazy::Need) from a JQL AST (expression first).
 
 use crate::jql::ast::{AccessStep, ArrayIndex, JqlAstNode};
-use crate::json::lazy::{Need, merge_need};
+use crate::json::builder::lazy::{Need, merge_need};
 
 /// What shape of *its input* does this expression need?
 pub fn required_input(ast: &JqlAstNode<'_>) -> Need {

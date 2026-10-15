@@ -1,4 +1,4 @@
-use super::{fixture, jql_execute, jql_parse};
+use super::{fixture, jql_execute, jql_parse, JqlExecuteArgs};
 use crate::json::value::JsonValue;
 
 #[test]
@@ -17,17 +17,18 @@ fn end_to_end_access_pipeline_and_filter() {
     let data = fixture::sample();
 
     assert_eq!(
-        jql_execute(&data, ".company.teams[0].name").unwrap(),
+        jql_execute(&data, ".company.teams[0].name", JqlExecuteArgs::default()).unwrap(),
         JsonValue::string("platform".to_string())
     );
     assert_eq!(
-        jql_execute(&data, ".matrix[1] | .[0,2]").unwrap(),
+        jql_execute(&data, ".matrix[1] | .[0,2]", JqlExecuteArgs::default()).unwrap(),
         JsonValue::array(vec![JsonValue::number(4.0), JsonValue::number(6.0)])
     );
     assert_eq!(
         jql_execute(
             &data,
-            ".candidates | filter(.id > 10 && .age < 20 && (.money > 10 || .gold >= 1))"
+            ".candidates | filter(.id > 10 && .age < 20 && (.money > 10 || .gold >= 1))",
+            JqlExecuteArgs::default(),
         )
         .unwrap(),
         JsonValue::array(vec![
@@ -36,7 +37,12 @@ fn end_to_end_access_pipeline_and_filter() {
         ])
     );
     assert_eq!(
-        jql_execute(&data, ".jobs[]{title,id} | filter(.id > 2) | .[0].title").unwrap(),
+        jql_execute(
+            &data,
+            ".jobs[]{title,id} | filter(.id > 2) | .[0].title",
+            JqlExecuteArgs::default(),
+        )
+        .unwrap(),
         JsonValue::string("PM".to_string())
     );
 }
@@ -47,7 +53,8 @@ fn end_to_end_map_and_object_construct() {
     assert_eq!(
         jql_execute(
             &data,
-            ".jobs | filter(.id > 2) | map({ name: .title, pay: .money })"
+            ".jobs | filter(.id > 2) | map({ name: .title, pay: .money })",
+            JqlExecuteArgs::default(),
         )
         .unwrap(),
         JsonValue::array(vec![
@@ -71,6 +78,9 @@ fn end_to_end_parse_then_execute_matches_direct_execute() {
     let via_ast = crate::jql::engine::Engine::execute(crate::jql::proxy::Proxy::new(&data), &ast)
         .unwrap()
         .into_value();
-    assert_eq!(via_ast, jql_execute(&data, query).unwrap());
+    assert_eq!(
+        via_ast,
+        jql_execute(&data, query, JqlExecuteArgs::default()).unwrap()
+    );
     assert_eq!(via_ast, JsonValue::string("Dave".to_string()));
 }

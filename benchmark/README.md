@@ -1,11 +1,17 @@
 # Benchmarks
 
-Two scripts only:
-
-| Script | What |
+| Script / bin | What |
 |---|---|
-| [`cli.py`](cli.py) | `rjq` vs stock `jq` (process wall time) → table + plot |
+| [`../benchmarks/parse_bench.rs`](../benchmarks/parse_bench.rs) | parse-only: `json_load_slice` vs `SIMDParser` |
+| [`cli.py`](cli.py) | `rjq` (eager / `--simd` / lazy) vs stock `jq` → table + plot |
 | [`python.py`](python.py) | `rjson_load` (bytes) vs `rjson_loads` (str) → table |
+
+## Parse-only (`parse_bench`)
+
+```bash
+cargo run --release --bin parse_bench -- benchmark/fixtures/fixture_records_v2_5mb.json
+cargo run --release --bin parse_bench -- path.json --iters 50 --warmup 5
+```
 
 ## CLI (`rjq` vs `jq`)
 
@@ -24,6 +30,8 @@ uv run --with matplotlib python benchmark/cli.py \
   --rjq ./target/release/rjq --jq "$(which jq)" \
   --size-mb 10 --runs 7 --plot benchmark/cli_rjq_vs_jq.png
 ```
+
+Variants per case: **rjq** (eager), **rjq --simd**, **rjq --parse lazy**, **jq**.
 
 Cases: **access**, **filter**, **map**, **filter_map**, **if_else** on nested records.
 

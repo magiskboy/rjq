@@ -4,10 +4,11 @@ use crate::Location;
 use crate::Span;
 use crate::json::{
     error::{ExpectedSyntax, FoundSyntax, JsonError, JsonErrorKind},
-    hook::{JsonAtom, JsonValueBuilder, ParseDecision, ParserHookable},
+    hook::{JsonAtom, ParseDecision, ParserHookable},
     lexer::Lexer,
     token::{JsonLexeme, JsonToken, JsonTokenKind},
     value::JsonValue,
+    builder::eager::JsonValueBuilder,
 };
 
 pub struct JsonParser<'a> {

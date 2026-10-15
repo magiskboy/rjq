@@ -1,13 +1,21 @@
 //! Lazy builder correctness: same engine, eager DOM vs lazy DOM must match.
 
-use crate::jql::{jql_execute, jql_execute_lazy};
+use crate::jql::{jql_execute, JqlExecuteArgs};
 use crate::json::parser::JsonParser;
 use crate::json::value::JsonValue;
 
 fn assert_lazy_matches_eager(data: &[u8], query: &str) {
     let eager_dom = JsonParser::parse_slice(data).expect("eager parse");
-    let eager = jql_execute(&eager_dom, query).expect("eager exec");
-    let lazy = jql_execute_lazy(data, query, false).expect("lazy exec");
+    let eager = jql_execute(&eager_dom, query, JqlExecuteArgs::default()).expect("eager exec");
+    let lazy = jql_execute(
+        data,
+        query,
+        JqlExecuteArgs {
+            lazy: true,
+            ..Default::default()
+        },
+    )
+    .expect("lazy exec");
     assert_eq!(
         lazy, eager,
         "lazy≠eager for query {query:?}\neager_dom={eager_dom:?}"
@@ -44,7 +52,15 @@ fn filter_then_map() {
 #[test]
 fn trailing_junk_accepted_under_lazy() {
     let data = br#"{"a":1,"b":2} trailing junk"#;
-    let lazy = jql_execute_lazy(data, ".a", false).expect("lazy");
+    let lazy = jql_execute(
+        data,
+        ".a",
+        JqlExecuteArgs {
+            lazy: true,
+            ..Default::default()
+        },
+    )
+    .expect("lazy");
     assert_eq!(lazy, JsonValue::number(1.0));
 }
 

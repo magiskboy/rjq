@@ -14,6 +14,10 @@ name = "rjq"
 path = "src/bin/jq/main.rs"
 required-features = ["cli"]
 
+[[bin]]
+name = "parse_bench"
+path = "benchmarks/parse_bench.rs"
+
 [[test]]
 name = "suite_e2e"
 path = "tests/suite_e2e.rs"

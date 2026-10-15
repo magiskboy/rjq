@@ -1,24 +1,5 @@
 //! Peephole AST optimizer: rewrite bottom-up until a fixed point.
 //!
-//! | Kind | Before | After |
-//! |------|--------|-------|
-//! | Identity pipe | `. \| x` / `x \| .` | `x` |
-//! | Access fuse | `.a \| .b` | `.a.b` |
-//! | Access fuse (chain) | `.a \| (.b \| rest)` | `.a.b \| rest` |
-//! | Filter fuse | `filter(p) \| filter(q)` | `filter(p && q)` |
-//! | Filter fuse (chain) | `filter(p) \| (filter(q) \| rest)` | `filter(p && q) \| rest` |
-//! | Map fuse | `map(f) \| map(g)` | `map(f \| g)` |
-//! | Map fuse (chain) | `map(f) \| (map(g) \| rest)` | `map(f \| g) \| rest` |
-//! | Numeric fold | `1 + 2 * 3` | `7` |
-//! | Comparison fold | `1 < 2` / `"a" == "a"` | `true` / `true` |
-//! | And absorb | `true && x` / `x && true` | `x` |
-//! | And short-circuit | `false && x` | `false` |
-//! | Or absorb | `false \|\| x` / `x \|\| false` | `x` |
-//! | Or short-circuit | `true \|\| x` | `true` |
-//! | If const-true | `if true then a else b end` | `a` |
-//! | If const-false | `if false then a else b end` | `b` |
-//! | If dead arm | `if false then a elif c then d else e end` | `if c then d else e end` |
-//!
 //! Rules apply through right-associative pipe chains. Division/mod by zero
 //! and non-literal operands are left unchanged.
 

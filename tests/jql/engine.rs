@@ -946,7 +946,14 @@ fn execute_opt(
     query: &str,
     optimize: bool,
 ) -> Result<JsonValue<'static>, JqlError> {
-    crate::jql::jql_execute_opt(data, query, optimize).map(|v| v.into_owned())
+    crate::jql::jql_execute(
+        data,
+        query,
+        crate::jql::JqlExecuteArgs {
+            optimize,
+            ..Default::default()
+        },
+    )
 }
 
 #[test]
