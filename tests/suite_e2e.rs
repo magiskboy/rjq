@@ -1,4 +1,6 @@
-//! E2E correctness suite for the `rjq` binary (`--parse eager` and `--parse lazy`).
+//! E2E correctness suite for the `rjq` binary.
+//!
+//! Modes: `--parse eager|lazy`, with and without `--simd`.
 //!
 //! Fixtures: [nst/JSONTestSuite](https://github.com/nst/JSONTestSuite) under
 //! `tests/json/suite/` (`y_*` accept · `n_*` reject · `i_*` implementation-defined).
@@ -27,6 +29,22 @@ const SKIP: &[&str] = &[
     "n_structure_100000_opening_arrays.json",
     "n_structure_open_array_object.json",
 ];
+
+#[derive(Clone, Copy)]
+struct Mode {
+    parse: &'static str,
+    simd: bool,
+}
+
+impl Mode {
+    fn label(self) -> String {
+        if self.simd {
+            format!("{}+simd", self.parse)
+        } else {
+            self.parse.to_string()
+        }
+    }
+}
 
 fn suite_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/json/suite")
@@ -58,19 +76,22 @@ fn run_jq(path: &Path) -> Output {
         .unwrap_or_else(|err| panic!("failed to spawn jq on {}: {err}", path.display()))
 }
 
-fn run_rjq(path: &Path, parse_mode: &str) -> Output {
-    Command::new(rjq_bin())
-        .args(["--no-color", "--parse", parse_mode, "-i"])
+fn run_rjq(path: &Path, mode: Mode) -> Output {
+    let mut cmd = Command::new(rjq_bin());
+    cmd.args(["--no-color", "--parse", mode.parse, "-i"])
         .arg(path)
         .args(["-s", "."])
-        .env("NO_COLOR", "1")
-        .output()
-        .unwrap_or_else(|err| {
-            panic!(
-                "failed to spawn rjq --parse {parse_mode} on {}: {err}",
-                path.display()
-            )
-        })
+        .env("NO_COLOR", "1");
+    if mode.simd {
+        cmd.arg("--simd");
+    }
+    cmd.output().unwrap_or_else(|err| {
+        panic!(
+            "failed to spawn rjq ({}) on {}: {err}",
+            mode.label(),
+            path.display()
+        )
+    })
 }
 
 /// Compact-encode `stdout` with `jq -c .` so pretty-print / number spelling match.
@@ -154,26 +175,33 @@ fn assert_outputs_match(jq: &Output, rjq: &Output) -> Result<(), String> {
     Ok(())
 }
 
-fn check_reject(path: &Path, parse_mode: &str, rjq: &Output) -> Result<(), String> {
+fn check_reject(path: &Path, mode: Mode, rjq: &Output) -> Result<(), String> {
     if !rjq.status.success() {
         return Ok(());
     }
 
     // Lazy may accept a complete value followed by junk (eager still rejects).
-    if parse_mode == "lazy" {
-        let eager = run_rjq(path, "eager");
+    if mode.parse == "lazy" {
+        let eager = run_rjq(
+            path,
+            Mode {
+                parse: "eager",
+                simd: mode.simd,
+            },
+        );
         if !eager.status.success() && jq_canonicalize(&rjq.stdout).is_ok() {
             return Ok(());
         }
     }
 
     Err(format!(
-        "rjq --parse {parse_mode} accepted n_ fixture (suite requires reject)"
+        "rjq ({}) accepted n_ fixture (suite requires reject)",
+        mode.label()
     ))
 }
 
-fn check_fixture(path: &Path, name: &str, parse_mode: &str, jq: &Output) -> Result<(), String> {
-    let rjq = run_rjq(path, parse_mode);
+fn check_fixture(path: &Path, name: &str, mode: Mode, jq: &Output) -> Result<(), String> {
+    let rjq = run_rjq(path, mode);
     match kind_of(name) {
         Kind::Accept => {
             if !jq.status.success() {
@@ -185,7 +213,7 @@ fn check_fixture(path: &Path, name: &str, parse_mode: &str, jq: &Output) -> Resu
                 assert_outputs_match(jq, &rjq)
             }
         }
-        Kind::Reject => check_reject(path, parse_mode, &rjq),
+        Kind::Reject => check_reject(path, mode, &rjq),
         Kind::Impl => match (jq.status.success(), rjq.status.success()) {
             (true, true) => assert_outputs_match(jq, &rjq),
             _ => Ok(()),
@@ -193,24 +221,25 @@ fn check_fixture(path: &Path, name: &str, parse_mode: &str, jq: &Output) -> Resu
     }
 }
 
-fn run_suite(parse_mode: &str) {
+fn run_suite(mode: Mode) {
     require_jq();
 
     let mut failures: Vec<String> = Vec::new();
     let mut checked = 0usize;
+    let label = mode.label();
 
     for path in fixtures() {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         let jq = run_jq(&path);
         checked += 1;
-        if let Err(err) = check_fixture(&path, &name, parse_mode, &jq) {
+        if let Err(err) = check_fixture(&path, &name, mode, &jq) {
             failures.push(format!("{name}: {err}"));
         }
     }
 
     assert!(
         failures.is_empty(),
-        "suite_e2e --parse {parse_mode}: {}/{} fixtures failed:\n{}",
+        "suite_e2e ({label}): {}/{} fixtures failed:\n{}",
         failures.len(),
         checked,
         failures.join("\n")
@@ -219,10 +248,32 @@ fn run_suite(parse_mode: &str) {
 
 #[test]
 fn json_suite_rjq_matches_jq_eager() {
-    run_suite("eager");
+    run_suite(Mode {
+        parse: "eager",
+        simd: false,
+    });
 }
 
 #[test]
 fn json_suite_rjq_matches_jq_lazy() {
-    run_suite("lazy");
+    run_suite(Mode {
+        parse: "lazy",
+        simd: false,
+    });
+}
+
+#[test]
+fn json_suite_rjq_matches_jq_eager_simd() {
+    run_suite(Mode {
+        parse: "eager",
+        simd: true,
+    });
+}
+
+#[test]
+fn json_suite_rjq_matches_jq_lazy_simd() {
+    run_suite(Mode {
+        parse: "lazy",
+        simd: true,
+    });
 }

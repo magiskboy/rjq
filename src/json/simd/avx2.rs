@@ -1,21 +1,14 @@
-//! AVX2 structural-classification backend for x86_64.
-//!
-//! Processes the input in 64-byte blocks (2×32-byte AVX2 loads). Falls back to
-//! [`super::scalar`] when AVX2 is unavailable, and uses a zero-padded temporary
-//! block for the sub-64-byte tail.
+//! AVX2 classify + fused structural indexer (x86_64).
 
-use super::index::StructuralIndex;
+use super::index::{append_set_bits, blend_block, StructuralIndex};
 use super::scalar;
-use super::stage1::{append_set_bits, blend_block, build_index_portable};
-use super::StructuralBitmasks;
+use super::{Bitmask, StructuralBitmasks};
 
-/// True when AVX2 vectorized classification is available on this CPU.
 #[inline]
 pub fn is_available() -> bool {
     std::is_x86_feature_detected!("avx2")
 }
 
-/// See [`super::scalar::compute_bitmasks`].
 #[inline]
 pub fn compute_bitmasks(input: &[u8]) -> StructuralBitmasks {
     if is_available() {
@@ -26,14 +19,13 @@ pub fn compute_bitmasks(input: &[u8]) -> StructuralBitmasks {
     }
 }
 
-/// Fused classify → blend → flatten.
 #[inline]
 pub fn build_structural_index(input: &[u8]) -> StructuralIndex {
     if is_available() {
         // SAFETY: guarded by runtime AVX2 detection.
         unsafe { build_structural_index_avx2(input) }
     } else {
-        build_index_portable(input)
+        StructuralIndex::build_portable(input)
     }
 }
 
@@ -53,6 +45,7 @@ unsafe fn build_structural_index_avx2(input: &[u8]) -> StructuralIndex {
     let mut offset = 0usize;
 
     while offset + 64 <= input.len() {
+        // SAFETY: `offset + 64 <= len`.
         let (ws, quote, bs, op) = unsafe { classify_block64(input.as_ptr().add(offset)) };
         let structural = blend_block(
             ws,
@@ -95,16 +88,10 @@ unsafe fn build_structural_index_avx2(input: &[u8]) -> StructuralIndex {
 
 #[target_feature(enable = "avx2")]
 unsafe fn compute_bitmasks_avx2(input: &[u8]) -> StructuralBitmasks {
-    let n_blocks = if input.is_empty() {
-        1
-    } else {
-        input.len().div_ceil(64)
-    };
-
-    let mut whitespace = vec![0u64; n_blocks];
-    let mut quote = vec![0u64; n_blocks];
-    let mut backslash = vec![0u64; n_blocks];
-    let mut structural = vec![0u64; n_blocks];
+    let mut whitespace = Bitmask::zeros(input.len());
+    let mut quote = Bitmask::zeros(input.len());
+    let mut backslash = Bitmask::zeros(input.len());
+    let mut structural = Bitmask::zeros(input.len());
 
     let mut offset = 0usize;
     let mut block_idx = 0usize;
@@ -112,10 +99,10 @@ unsafe fn compute_bitmasks_avx2(input: &[u8]) -> StructuralBitmasks {
     while offset + 64 <= input.len() {
         // SAFETY: `offset + 64 <= len`.
         let (w, q, b, s) = unsafe { classify_block64(input.as_ptr().add(offset)) };
-        whitespace[block_idx] = w;
-        quote[block_idx] = q;
-        backslash[block_idx] = b;
-        structural[block_idx] = s;
+        whitespace.set_bucket(block_idx, w);
+        quote.set_bucket(block_idx, q);
+        backslash.set_bucket(block_idx, b);
+        structural.set_bucket(block_idx, s);
         offset += 64;
         block_idx += 1;
     }
@@ -127,10 +114,15 @@ unsafe fn compute_bitmasks_avx2(input: &[u8]) -> StructuralBitmasks {
             buf[..rem].copy_from_slice(&input[offset..]);
         }
         let (w, q, b, s) = unsafe { classify_block64(buf.as_ptr()) };
-        whitespace[block_idx] = w;
-        quote[block_idx] = q;
-        backslash[block_idx] = b;
-        structural[block_idx] = s;
+        let valid = if rem == 0 {
+            0u64
+        } else {
+            (1u64 << rem) - 1
+        };
+        whitespace.set_bucket(block_idx, w & valid);
+        quote.set_bucket(block_idx, q & valid);
+        backslash.set_bucket(block_idx, b & valid);
+        structural.set_bucket(block_idx, s & valid);
     }
 
     StructuralBitmasks {
@@ -142,7 +134,6 @@ unsafe fn compute_bitmasks_avx2(input: &[u8]) -> StructuralBitmasks {
     }
 }
 
-/// Classify 64 bytes at `ptr` into `(whitespace, quote, backslash, structural)`.
 #[target_feature(enable = "avx2")]
 unsafe fn classify_block64(ptr: *const u8) -> (u64, u64, u64, u64) {
     use std::arch::x86_64::*;

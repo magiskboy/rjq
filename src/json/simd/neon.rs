@@ -1,23 +1,19 @@
-//! NEON structural-classification + fused stage-1 index builder (AArch64).
+//! NEON classify + fused structural indexer (AArch64).
 
-use super::index::StructuralIndex;
-use super::stage1::{append_set_bits, blend_block};
-use super::StructuralBitmasks;
+use super::index::{append_set_bits, blend_block, StructuralIndex};
+use super::{Bitmask, StructuralBitmasks};
 
-/// NEON is a baseline AArch64 feature.
 #[inline]
 pub fn is_available() -> bool {
     true
 }
 
-/// See [`super::scalar::compute_bitmasks`].
 #[inline]
 pub fn compute_bitmasks(input: &[u8]) -> StructuralBitmasks {
     // SAFETY: NEON is a baseline AArch64 feature.
     unsafe { compute_bitmasks_neon(input) }
 }
 
-/// Fused classify → blend → flatten (no intermediate bitmask vectors).
 #[inline]
 pub fn build_structural_index(input: &[u8]) -> StructuralIndex {
     // SAFETY: NEON is a baseline AArch64 feature.
@@ -83,26 +79,21 @@ unsafe fn build_structural_index_neon(input: &[u8]) -> StructuralIndex {
 
 #[target_feature(enable = "neon")]
 unsafe fn compute_bitmasks_neon(input: &[u8]) -> StructuralBitmasks {
-    let n_blocks = if input.is_empty() {
-        1
-    } else {
-        input.len().div_ceil(64)
-    };
-
-    let mut whitespace = vec![0u64; n_blocks];
-    let mut quote = vec![0u64; n_blocks];
-    let mut backslash = vec![0u64; n_blocks];
-    let mut structural = vec![0u64; n_blocks];
+    let mut whitespace = Bitmask::zeros(input.len());
+    let mut quote = Bitmask::zeros(input.len());
+    let mut backslash = Bitmask::zeros(input.len());
+    let mut structural = Bitmask::zeros(input.len());
 
     let mut offset = 0usize;
     let mut block_idx = 0usize;
 
     while offset + 64 <= input.len() {
+        // SAFETY: `offset + 64 <= len`.
         let (w, q, b, s) = unsafe { classify_block64(input.as_ptr().add(offset)) };
-        whitespace[block_idx] = w;
-        quote[block_idx] = q;
-        backslash[block_idx] = b;
-        structural[block_idx] = s;
+        whitespace.set_bucket(block_idx, w);
+        quote.set_bucket(block_idx, q);
+        backslash.set_bucket(block_idx, b);
+        structural.set_bucket(block_idx, s);
         offset += 64;
         block_idx += 1;
     }
@@ -114,10 +105,15 @@ unsafe fn compute_bitmasks_neon(input: &[u8]) -> StructuralBitmasks {
             buf[..rem].copy_from_slice(&input[offset..]);
         }
         let (w, q, b, s) = unsafe { classify_block64(buf.as_ptr()) };
-        whitespace[block_idx] = w;
-        quote[block_idx] = q;
-        backslash[block_idx] = b;
-        structural[block_idx] = s;
+        let valid = if rem == 0 {
+            0u64
+        } else {
+            (1u64 << rem) - 1
+        };
+        whitespace.set_bucket(block_idx, w & valid);
+        quote.set_bucket(block_idx, q & valid);
+        backslash.set_bucket(block_idx, b & valid);
+        structural.set_bucket(block_idx, s & valid);
     }
 
     StructuralBitmasks {
@@ -129,7 +125,6 @@ unsafe fn compute_bitmasks_neon(input: &[u8]) -> StructuralBitmasks {
     }
 }
 
-/// Classify 64 bytes at `ptr` into `(whitespace, quote, backslash, structural)`.
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn classify_block64(ptr: *const u8) -> (u64, u64, u64, u64) {
     use std::arch::aarch64::*;
@@ -179,11 +174,9 @@ pub(crate) unsafe fn classify_block64(ptr: *const u8) -> (u64, u64, u64, u64) {
     (whitespace, quote, backslash, structural)
 }
 
-/// Compact 16 NEON comparison lanes (0x00 / 0xFF) into a 16-bit mask.
 #[target_feature(enable = "neon")]
 unsafe fn neon_mask16(lanes: std::arch::aarch64::uint8x16_t) -> u32 {
     use std::arch::aarch64::*;
-    // Compress via MSB of each lane (cmp results are 0x00 / 0xFF).
     let mut bytes = [0u8; 16];
     unsafe { vst1q_u8(bytes.as_mut_ptr(), lanes) };
     let mut mask = 0u32;
@@ -196,8 +189,8 @@ unsafe fn neon_mask16(lanes: std::arch::aarch64::uint8x16_t) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::json::simd::index::StructuralIndex;
     use crate::json::simd::scalar;
-    use crate::json::simd::stage1::build_index_portable;
 
     #[test]
     fn dispatch_matches_scalar() {
@@ -228,7 +221,7 @@ mod tests {
         for s in samples {
             assert_eq!(
                 build_structural_index(s).indexes,
-                build_index_portable(s).indexes,
+                StructuralIndex::build_portable(s).indexes,
                 "mismatch on {:?}",
                 String::from_utf8_lossy(s)
             );

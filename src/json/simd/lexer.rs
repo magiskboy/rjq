@@ -1,7 +1,4 @@
-//! Stage-2 lexer over a structural index (simdjson-style).
-//!
-//! Navigation uses the index; string contents are scanned with the shared
-//! [`crate::json::scan`] SIMD helpers (same hot path as the scalar lexer).
+//! Index-driven lexer over [`StructuralIndex`].
 
 use std::borrow::Cow;
 
@@ -15,7 +12,6 @@ use crate::json::{
 use crate::json::simd::index::StructuralIndex;
 use crate::{Location, Span};
 
-/// Lexer over a structural index produced by fused stage-1.
 pub struct SIMDLexer<'a> {
     input: &'a [u8],
     index: StructuralIndex,
@@ -70,7 +66,6 @@ impl<'a> SIMDLexer<'a> {
         JsonError::at(kind, span, self.location_at(span.start))
     }
 
-    /// Lex the atom at the current structural start (`"`, number, or literal).
     pub fn next_value_token(&mut self) -> Result<JsonToken<'a>, JsonError> {
         let start = self.peek_index().ok_or_else(|| {
             self.error_at(
@@ -117,7 +112,6 @@ impl<'a> SIMDLexer<'a> {
         Ok(token)
     }
 
-    /// Scan from opening `"` with SIMD `find_string_special` (handles escapes).
     fn lex_string(&self, start: usize) -> Result<JsonToken<'a>, JsonError> {
         debug_assert_eq!(self.input.get(start), Some(&b'"'));
         let mut pos = start + 1;
@@ -295,11 +289,10 @@ fn unescape_kind(err: UnescapeError) -> JsonErrorKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json::simd::stage1;
     use std::borrow::Cow;
 
     fn lexer_on(input: &[u8]) -> SIMDLexer<'_> {
-        SIMDLexer::new(input, stage1::build_index(input))
+        SIMDLexer::new(input, StructuralIndex::build(input))
     }
 
     #[test]

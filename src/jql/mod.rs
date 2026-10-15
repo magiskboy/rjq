@@ -19,61 +19,79 @@ pub(crate) mod parser;
 pub(crate) mod proxy;
 pub(crate) mod token;
 
+/// Input to [`jql_execute`]: an already-built DOM, or raw JSON bytes to parse.
+#[derive(Debug, Clone, Copy)]
+pub enum JqlInput<'a> {
+    Value(&'a JsonValue<'a>),
+    Bytes(&'a [u8]),
+}
+
+impl<'a> From<&'a JsonValue<'a>> for JqlInput<'a> {
+    fn from(value: &'a JsonValue<'a>) -> Self {
+        Self::Value(value)
+    }
+}
+
+impl<'a> From<&'a [u8]> for JqlInput<'a> {
+    fn from(data: &'a [u8]) -> Self {
+        Self::Bytes(data)
+    }
+}
+
+impl<'a, const N: usize> From<&'a [u8; N]> for JqlInput<'a> {
+    fn from(data: &'a [u8; N]) -> Self {
+        Self::Bytes(data.as_slice())
+    }
+}
+
+/// Flags controlling parse/optimize behaviour for [`jql_execute`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct JqlExecuteArgs {
+    pub optimize: bool,
+    /// Selective parse via [`LazyJsonValueBuilder`] (only for [`JqlInput::Bytes`]).
+    pub lazy: bool,
+    /// Use [`SIMDParser`] when parsing bytes (only for [`JqlInput::Bytes`]).
+    pub simd: bool,
+}
+
 pub fn jql_parse<'a>(source: &'a str) -> Result<JqlAstNode<'a>, JqlError> {
     let tokens = JqlLexer::tokenize(source)?;
     JqlParser::parse(&tokens, source)
 }
 
-pub fn jql_execute<'a>(value: &'a JsonValue<'a>, query: &str) -> Result<JsonValue<'a>, JqlError> {
-    jql_execute_opt(value, query, false)
-}
-
-/// Execute `query` against `value`. When `optimize` is true, run
-/// [`Engine::optimize`] on the parsed AST before evaluation.
-pub fn jql_execute_opt<'a>(
-    value: &'a JsonValue<'a>,
+pub fn jql_execute<'a>(
+    input: impl Into<JqlInput<'a>>,
     query: &str,
-    optimize: bool,
-) -> Result<JsonValue<'a>, JqlError> {
-    let proxy = Proxy::new(value);
-    let mut ast = jql_parse(query)?;
-    if optimize {
-        ast = Engine::optimize(ast);
-    }
-    let result = Engine::execute(proxy, &ast)?;
-    Ok(result.into_value())
-}
-
-/// Parse `data` with [`LazyJsonValueBuilder`] guided by `query`, then run the
-/// **unchanged** engine. Expression is analyzed before JSON bytes are read.
-pub fn jql_execute_lazy(
-    data: &[u8],
-    query: &str,
-    optimize: bool,
-) -> Result<JsonValue<'static>, JqlError> {
-    jql_execute_lazy_with(data, query, optimize, false)
-}
-
-/// Like [`jql_execute_lazy`], but optionally uses [`SIMDParser`] for stage-1/2 JSON.
-pub fn jql_execute_lazy_with(
-    data: &[u8],
-    query: &str,
-    optimize: bool,
-    simd: bool,
+    args: JqlExecuteArgs,
 ) -> Result<JsonValue<'static>, JqlError> {
     let mut ast = jql_parse(query)?;
-    if optimize {
+    if args.optimize {
         ast = Engine::optimize(ast);
     }
-    let need = required_input(&ast);
-    let mut hook = LazyJsonValueBuilder::new(need);
-    let value = if simd {
-        SIMDParser::parse_slice_with(data, &mut hook)?
-    } else {
-        JsonParser::parse_slice_with(data, &mut hook)?
-    };
-    let result = Engine::execute(Proxy::new(&value), &ast)?;
-    Ok(result.into_value().into_owned())
+
+    match input.into() {
+        JqlInput::Value(value) => {
+            let result = Engine::execute(Proxy::new(value), &ast)?;
+            Ok(result.into_value().into_owned())
+        }
+        JqlInput::Bytes(data) => {
+            let value = if args.lazy {
+                let need = required_input(&ast);
+                let mut hook = LazyJsonValueBuilder::new(need);
+                if args.simd {
+                    SIMDParser::parse_slice_with(data, &mut hook)?
+                } else {
+                    JsonParser::parse_slice_with(data, &mut hook)?
+                }
+            } else if args.simd {
+                SIMDParser::parse_slice(data)?
+            } else {
+                JsonParser::parse_slice(data)?
+            };
+            let result = Engine::execute(Proxy::new(&value), &ast)?;
+            Ok(result.into_value().into_owned())
+        }
+    }
 }
 
 #[cfg(test)]

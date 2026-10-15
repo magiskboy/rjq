@@ -2,8 +2,8 @@ use std::{fs::File, io::Read, str::FromStr};
 
 use crate::error::AppError;
 use crate::render;
-use rs_jq::jql::{jql_execute_lazy_with, jql_execute_opt};
-use rs_jq::json::{json_load_slice, value::JsonValue, SIMDParser};
+use rs_jq::jql::{jql_execute, JqlExecuteArgs};
+use rs_jq::json::value::JsonValue;
 use structopt::StructOpt;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -100,41 +100,22 @@ fn load_input(input: &str) -> Result<Box<dyn Read>, AppError> {
 }
 
 fn process(mut reader: Box<dyn Read>, opts: &Opts) -> Result<JsonValue<'static>, AppError> {
-    match opts.parse {
-        ParseMode::Lazy => {
-            let mut buf = Vec::new();
-            reader
-                .read_to_end(&mut buf)
-                .map_err(|source| AppError::Io {
-                    path: None,
-                    source,
-                })?;
-            Ok(jql_execute_lazy_with(
-                &buf,
-                &opts.script,
-                opts.optimize,
-                opts.simd,
-            )?)
-        }
-        ParseMode::Eager => {
-            // Keep the input buffer alive so parse can borrow strings (zero-copy).
-            // Only the query result is cloned to `'static`.
-            let mut buf = Vec::new();
-            reader
-                .read_to_end(&mut buf)
-                .map_err(|source| AppError::Io {
-                    path: None,
-                    source,
-                })?;
-            let json_value = if opts.simd {
-                SIMDParser::parse_slice(&buf)?
-            } else {
-                json_load_slice(&buf)?
-            };
-            let result = jql_execute_opt(&json_value, &opts.script, opts.optimize)?;
-            Ok(result.into_owned())
-        }
-    }
+    let mut buf = Vec::new();
+    reader
+        .read_to_end(&mut buf)
+        .map_err(|source| AppError::Io {
+            path: None,
+            source,
+        })?;
+    Ok(jql_execute(
+        buf.as_slice(),
+        &opts.script,
+        JqlExecuteArgs {
+            optimize: opts.optimize,
+            lazy: opts.parse == ParseMode::Lazy,
+            simd: opts.simd,
+        },
+    )?)
 }
 
 pub fn execute() -> Result<(), AppError> {

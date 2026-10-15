@@ -1,9 +1,17 @@
 # Benchmarks
 
-| Script | What |
+| Script / bin | What |
 |---|---|
+| [`../benchmarks/parse_bench.rs`](../benchmarks/parse_bench.rs) | parse-only: `json_load_slice` vs `SIMDParser` |
 | [`cli.py`](cli.py) | `rjq` (eager / `--simd` / lazy) vs stock `jq` → table + plot |
 | [`python.py`](python.py) | `rjson_load` (bytes) vs `rjson_loads` (str) → table |
+
+## Parse-only (`parse_bench`)
+
+```bash
+cargo run --release --bin parse_bench -- benchmark/fixtures/fixture_records_v2_5mb.json
+cargo run --release --bin parse_bench -- path.json --iters 50 --warmup 5
+```
 
 ## CLI (`rjq` vs `jq`)
 

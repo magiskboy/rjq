@@ -1,6 +1,4 @@
-//! Stage-2 recursive-descent parser driven by [`super::lexer::SIMDLexer`].
-//!
-//! Same hook/error interface as [`crate::json::parser::JsonParser`].
+//! Index-driven recursive-descent parser (same hooks as [`crate::json::parser::JsonParser`]).
 
 use std::io::Read;
 
@@ -13,7 +11,7 @@ use crate::json::{
     value::JsonValue,
 };
 use crate::json::simd::{
-    blend, index::StructuralIndex, lexer::SIMDLexer, stage1, StructuralBitmasks,
+    blend, index::StructuralIndex, lexer::SIMDLexer, StructuralBitmasks,
 };
 use crate::{Location, Span};
 
@@ -24,9 +22,6 @@ use super::neon as backend;
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 use crate::json::simd::scalar;
 
-/// SIMD JSON parser (simdjson-style stage 1 + stage 2).
-///
-/// Public entry points mirror [`crate::json::parser::JsonParser`].
 pub struct SIMDParser<'a> {
     lexer: SIMDLexer<'a>,
 }
@@ -44,7 +39,7 @@ impl<'a> SIMDParser<'a> {
         data: &'a [u8],
         hook: &mut H,
     ) -> Result<H::Value, H::Error> {
-        let index = stage1::build_index(data);
+        let index = StructuralIndex::build(data);
         let lexer = SIMDLexer::new(data, index);
         let mut parser = Self { lexer };
         if parser.lexer.is_empty() {
@@ -71,9 +66,7 @@ impl<'a> SIMDParser<'a> {
     }
 }
 
-/// Stage-1 helpers + owned-buffer entry points.
 impl SIMDParser<'_> {
-    /// Buffer the reader, parse with zero-copy borrows, then own borrowed strings.
     pub fn parse_reader(mut reader: impl Read) -> Result<JsonValue<'static>, JsonError> {
         let mut buf = Vec::new();
         reader.read_to_end(&mut buf).map_err(JsonError::io)?;
@@ -101,7 +94,7 @@ impl SIMDParser<'_> {
     }
 
     pub fn structural_indexes(input: &[u8]) -> StructuralIndex {
-        stage1::build_index(input)
+        StructuralIndex::build(input)
     }
 }
 
@@ -342,7 +335,6 @@ impl<'a> SIMDParser<'a> {
         }
     }
 
-    /// Validate and advance past one JSON value without materializing it.
     pub(crate) fn skip_value(&mut self) -> Result<(), JsonError> {
         match self.peek_byte() {
             Some(b'{') => self.skip_object(),
@@ -459,7 +451,7 @@ impl<'a> SIMDParser<'a> {
                 _ => Err(self.error(JsonErrorKind::InvalidNumber, token.span).into()),
             },
             JsonTokenKind::Stop => Err(self.eof_error(ExpectedSyntax::Value).into()),
-            JsonTokenKind::Whitespace => unreachable!("whitespace is never a structural start"),
+            JsonTokenKind::Whitespace => unreachable!(),
         }
     }
 
