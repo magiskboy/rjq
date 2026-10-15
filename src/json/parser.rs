@@ -3,8 +3,8 @@ use std::io::Read;
 use crate::Location;
 use crate::Span;
 use crate::json::{
-    builder::{JsonAtom, JsonBuilder, JsonValueBuilder},
     error::{ExpectedSyntax, FoundSyntax, JsonError, JsonErrorKind},
+    hook::{JsonAtom, JsonValueBuilder, ParserHookable},
     lexer::Lexer,
     token::{JsonLexeme, JsonToken, JsonTokenKind},
     value::JsonValue,
@@ -25,25 +25,25 @@ impl<'a> JsonParser<'a> {
         Self::parse_slice(source.as_bytes())
     }
 
-    pub fn parse_slice_with<B: JsonBuilder<'a>>(
+    pub fn parse_slice_with<H: ParserHookable<'a>>(
         data: &'a [u8],
-        builder: &mut B,
-    ) -> Result<B::Value, B::Error> {
-        Self::from_lexer(Lexer::from_slice(data), builder)
+        hook: &mut H,
+    ) -> Result<H::Value, H::Error> {
+        Self::from_lexer(Lexer::from_slice(data), hook)
     }
 
     #[cfg_attr(not(feature = "python"), allow(dead_code))]
-    pub fn parse_str_with<B: JsonBuilder<'a>>(
+    pub fn parse_str_with<H: ParserHookable<'a>>(
         source: &'a str,
-        builder: &mut B,
-    ) -> Result<B::Value, B::Error> {
-        Self::parse_slice_with(source.as_bytes(), builder)
+        hook: &mut H,
+    ) -> Result<H::Value, H::Error> {
+        Self::parse_slice_with(source.as_bytes(), hook)
     }
 
-    fn from_lexer<B: JsonBuilder<'a>>(
+    fn from_lexer<H: ParserHookable<'a>>(
         lexer: Lexer<'a>,
-        builder: &mut B,
-    ) -> Result<B::Value, B::Error> {
+        hook: &mut H,
+    ) -> Result<H::Value, H::Error> {
         let mut parser = Self { last_end: 0, lexer };
         parser.skip_ws();
         if parser.peek().is_none() {
@@ -55,7 +55,7 @@ impl<'a> JsonParser<'a> {
             )
             .into());
         }
-        let value = parser.parse_value(builder)?;
+        let value = parser.parse_value(hook)?;
         parser.expect_eof()?;
         Ok(value)
     }
@@ -137,14 +137,14 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn parse_object<B: JsonBuilder<'a>>(&mut self, builder: &mut B) -> Result<B::Value, B::Error> {
+    fn parse_object<H: ParserHookable<'a>>(&mut self, hook: &mut H) -> Result<H::Value, H::Error> {
         self.expect_byte(b'{')?;
-        let mut object = builder.begin_object()?;
+        let mut object = hook.on_begin_object()?;
 
         self.skip_ws();
         if self.peek() == Some(b'}') {
             self.bump_byte();
-            return builder.end_object(object);
+            return hook.on_end_object(object);
         }
 
         loop {
@@ -184,8 +184,8 @@ impl<'a> JsonParser<'a> {
             };
 
             self.expect_byte(b':')?;
-            let value = self.parse_value(builder)?;
-            builder.object_insert(&mut object, key, value)?;
+            let value = self.parse_value(hook)?;
+            hook.on_object_entry(&mut object, key, value)?;
 
             self.skip_ws();
             match self.peek() {
@@ -217,17 +217,17 @@ impl<'a> JsonParser<'a> {
             }
         }
 
-        builder.end_object(object)
+        hook.on_end_object(object)
     }
 
-    fn parse_array<B: JsonBuilder<'a>>(&mut self, builder: &mut B) -> Result<B::Value, B::Error> {
+    fn parse_array<H: ParserHookable<'a>>(&mut self, hook: &mut H) -> Result<H::Value, H::Error> {
         self.expect_byte(b'[')?;
-        let mut array = builder.begin_array()?;
+        let mut array = hook.on_begin_array()?;
 
         self.skip_ws();
         if self.peek() == Some(b']') {
             self.bump_byte();
-            return builder.end_array(array);
+            return hook.on_end_array(array);
         }
 
         loop {
@@ -244,8 +244,8 @@ impl<'a> JsonParser<'a> {
                 Some(_) => {}
             }
 
-            let value = self.parse_value(builder)?;
-            builder.array_push(&mut array, value)?;
+            let value = self.parse_value(hook)?;
+            hook.on_array_element(&mut array, value)?;
 
             self.skip_ws();
             match self.peek() {
@@ -274,21 +274,21 @@ impl<'a> JsonParser<'a> {
             }
         }
 
-        builder.end_array(array)
+        hook.on_end_array(array)
     }
 
-    fn parse_value<B: JsonBuilder<'a>>(&mut self, builder: &mut B) -> Result<B::Value, B::Error> {
+    fn parse_value<H: ParserHookable<'a>>(&mut self, hook: &mut H) -> Result<H::Value, H::Error> {
         self.skip_ws();
         match self.peek() {
-            Some(b'{') => self.parse_object(builder),
-            Some(b'[') => self.parse_array(builder),
+            Some(b'{') => self.parse_object(hook),
+            Some(b'[') => self.parse_array(hook),
             None => Err(self.eof_error(ExpectedSyntax::Value).into()),
             Some(b) if !Self::starts_value(b) => Err(self
                 .unexpected(ExpectedSyntax::Value, FoundSyntax::Byte(b))
                 .into()),
             Some(_) => {
                 let token = self.next_value_token()?;
-                self.atom_from_token(builder, token)
+                self.atom_from_token(hook, token)
             }
         }
     }
@@ -302,21 +302,21 @@ impl<'a> JsonParser<'a> {
         Ok(token)
     }
 
-    fn atom_from_token<B: JsonBuilder<'a>>(
+    fn atom_from_token<H: ParserHookable<'a>>(
         &self,
-        builder: &mut B,
+        hook: &mut H,
         token: JsonToken<'a>,
-    ) -> Result<B::Value, B::Error> {
+    ) -> Result<H::Value, H::Error> {
         match token.kind {
-            JsonTokenKind::Null => builder.atom(JsonAtom::Null),
-            JsonTokenKind::True => builder.atom(JsonAtom::Bool(true)),
-            JsonTokenKind::False => builder.atom(JsonAtom::Bool(false)),
+            JsonTokenKind::Null => hook.on_atom(JsonAtom::Null),
+            JsonTokenKind::True => hook.on_atom(JsonAtom::Bool(true)),
+            JsonTokenKind::False => hook.on_atom(JsonAtom::Bool(false)),
             JsonTokenKind::String => match token.lexeme {
-                JsonLexeme::String(s) => builder.atom(JsonAtom::String(s)),
+                JsonLexeme::String(s) => hook.on_atom(JsonAtom::String(s)),
                 _ => Err(self.error(JsonErrorKind::InvalidEscape, token.span).into()),
             },
             JsonTokenKind::Number => match token.lexeme {
-                JsonLexeme::Number(n) => builder.atom(JsonAtom::Number(n)),
+                JsonLexeme::Number(n) => hook.on_atom(JsonAtom::Number(n)),
                 _ => Err(self.error(JsonErrorKind::InvalidNumber, token.span).into()),
             },
             JsonTokenKind::Stop => Err(self.eof_error(ExpectedSyntax::Value).into()),

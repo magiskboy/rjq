@@ -5,7 +5,7 @@ use crate::json::{error::JsonError, number::JsonNumber, value::JsonObject, value
 /// A scalar the lexer/parser has already validated.
 ///
 /// The parser decides *that* something is a JSON null/bool/number/string;
-/// the builder decides *how* that atom becomes a value in the target
+/// the hook decides *how* that atom becomes a value in the target
 /// representation (Rust `JsonValue`, a Python object, …).
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsonAtom<'a> {
@@ -15,48 +15,51 @@ pub enum JsonAtom<'a> {
     String(Cow<'a, str>),
 }
 
-/// Builds a target value tree while the parser walks JSON syntax.
+/// Hook into the recursive-descent parser.
 ///
-/// `Array` / `Object` are the in-progress container types; `Value` is the
-/// finished form. Splitting them lets a builder use e.g. `Vec<_>` while
-/// open and wrap into `JsonValue::Array` only at `end_array`.
-pub trait JsonBuilder<'a> {
+/// The parser owns syntax (tokens, braces, commas). A [`ParserHookable`]
+/// receives structural events and builds whatever target it wants — a
+/// [`JsonValue`] tree, CPython objects, a tape, or (later) a path-masked /
+/// skip-capable consumer for lazy parse.
+///
+/// `Array` / `Object` are in-progress containers; `Value` is the finished form.
+pub trait ParserHookable<'a> {
     type Value;
     type Array;
     type Object;
     type Error: From<JsonError>;
 
-    fn atom(&mut self, atom: JsonAtom<'a>) -> Result<Self::Value, Self::Error>;
+    fn on_atom(&mut self, atom: JsonAtom<'a>) -> Result<Self::Value, Self::Error>;
 
-    fn begin_array(&mut self) -> Result<Self::Array, Self::Error>;
-    fn array_push(
+    fn on_begin_array(&mut self) -> Result<Self::Array, Self::Error>;
+    fn on_array_element(
         &mut self,
         array: &mut Self::Array,
         value: Self::Value,
     ) -> Result<(), Self::Error>;
-    fn end_array(&mut self, array: Self::Array) -> Result<Self::Value, Self::Error>;
+    fn on_end_array(&mut self, array: Self::Array) -> Result<Self::Value, Self::Error>;
 
-    fn begin_object(&mut self) -> Result<Self::Object, Self::Error>;
-    fn object_insert(
+    fn on_begin_object(&mut self) -> Result<Self::Object, Self::Error>;
+    fn on_object_entry(
         &mut self,
         object: &mut Self::Object,
         key: Cow<'a, str>,
         value: Self::Value,
     ) -> Result<(), Self::Error>;
-    fn end_object(&mut self, object: Self::Object) -> Result<Self::Value, Self::Error>;
+    fn on_end_object(&mut self, object: Self::Object) -> Result<Self::Value, Self::Error>;
 }
 
-/// Builder that materializes the crate's native [`JsonValue`] tree.
+/// Hook that materializes the crate's native [`JsonValue`] tree.
 #[derive(Debug, Default)]
 pub struct JsonValueBuilder;
 
-impl<'a> JsonBuilder<'a> for JsonValueBuilder {
+impl<'a> ParserHookable<'a> for JsonValueBuilder {
     type Value = JsonValue<'a>;
     type Array = Vec<JsonValue<'a>>;
     type Object = JsonObject<'a>;
     type Error = JsonError;
 
-    fn atom(&mut self, atom: JsonAtom<'a>) -> Result<Self::Value, Self::Error> {
+    fn on_atom(&mut self, atom: JsonAtom<'a>) -> Result<Self::Value, Self::Error> {
         Ok(match atom {
             JsonAtom::Null => JsonValue::null(),
             JsonAtom::Bool(v) => JsonValue::boolean(v),
@@ -65,11 +68,11 @@ impl<'a> JsonBuilder<'a> for JsonValueBuilder {
         })
     }
 
-    fn begin_array(&mut self) -> Result<Self::Array, Self::Error> {
+    fn on_begin_array(&mut self) -> Result<Self::Array, Self::Error> {
         Ok(Vec::new())
     }
 
-    fn array_push(
+    fn on_array_element(
         &mut self,
         array: &mut Self::Array,
         value: Self::Value,
@@ -78,15 +81,15 @@ impl<'a> JsonBuilder<'a> for JsonValueBuilder {
         Ok(())
     }
 
-    fn end_array(&mut self, array: Self::Array) -> Result<Self::Value, Self::Error> {
+    fn on_end_array(&mut self, array: Self::Array) -> Result<Self::Value, Self::Error> {
         Ok(JsonValue::array(array))
     }
 
-    fn begin_object(&mut self) -> Result<Self::Object, Self::Error> {
+    fn on_begin_object(&mut self) -> Result<Self::Object, Self::Error> {
         Ok(JsonObject::new())
     }
 
-    fn object_insert(
+    fn on_object_entry(
         &mut self,
         object: &mut Self::Object,
         key: Cow<'a, str>,
@@ -98,7 +101,7 @@ impl<'a> JsonBuilder<'a> for JsonValueBuilder {
         Ok(())
     }
 
-    fn end_object(&mut self, object: Self::Object) -> Result<Self::Value, Self::Error> {
+    fn on_end_object(&mut self, object: Self::Object) -> Result<Self::Value, Self::Error> {
         Ok(JsonValue::Object(object))
     }
 }

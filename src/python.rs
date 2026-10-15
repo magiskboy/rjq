@@ -4,8 +4,8 @@ use std::ffi::CString;
 use std::ptr;
 
 use crate::json::{
-    builder::{JsonAtom, JsonBuilder},
     error::JsonError,
+    hook::{JsonAtom, ParserHookable},
     number::{NumberError, PyNumber},
     parser::JsonParser,
 };
@@ -44,7 +44,7 @@ impl From<NumberError> for PyErr {
     }
 }
 
-/// Builds CPython objects directly from parser atoms — no intermediate `JsonValue` tree.
+/// [`ParserHookable`] that builds CPython objects directly — no intermediate `JsonValue` tree.
 struct PyBuilder<'py> {
     py: Python<'py>,
     /// Object-key intern table for this parse: one `PyString` per distinct key text.
@@ -78,13 +78,13 @@ impl<'py> PyBuilder<'py> {
     }
 }
 
-impl<'a, 'py> JsonBuilder<'a> for PyBuilder<'py> {
+impl<'a, 'py> ParserHookable<'a> for PyBuilder<'py> {
     type Value = Bound<'py, PyAny>;
     type Array = Bound<'py, PyList>;
     type Object = Bound<'py, PyDict>;
     type Error = PyErr;
 
-    fn atom(&mut self, atom: JsonAtom<'a>) -> Result<Self::Value, Self::Error> {
+    fn on_atom(&mut self, atom: JsonAtom<'a>) -> Result<Self::Value, Self::Error> {
         match atom {
             JsonAtom::Null => Ok(self.py.None().into_bound(self.py)),
             JsonAtom::Bool(v) => v.into_bound_py_any(self.py),
@@ -97,11 +97,11 @@ impl<'a, 'py> JsonBuilder<'a> for PyBuilder<'py> {
         }
     }
 
-    fn begin_array(&mut self) -> Result<Self::Array, Self::Error> {
+    fn on_begin_array(&mut self) -> Result<Self::Array, Self::Error> {
         Ok(PyList::empty(self.py))
     }
 
-    fn array_push(
+    fn on_array_element(
         &mut self,
         array: &mut Self::Array,
         value: Self::Value,
@@ -109,15 +109,15 @@ impl<'a, 'py> JsonBuilder<'a> for PyBuilder<'py> {
         array.append(value)
     }
 
-    fn end_array(&mut self, array: Self::Array) -> Result<Self::Value, Self::Error> {
+    fn on_end_array(&mut self, array: Self::Array) -> Result<Self::Value, Self::Error> {
         Ok(array.into_any())
     }
 
-    fn begin_object(&mut self) -> Result<Self::Object, Self::Error> {
+    fn on_begin_object(&mut self) -> Result<Self::Object, Self::Error> {
         Ok(PyDict::new(self.py))
     }
 
-    fn object_insert(
+    fn on_object_entry(
         &mut self,
         object: &mut Self::Object,
         key: Cow<'a, str>,
@@ -127,7 +127,7 @@ impl<'a, 'py> JsonBuilder<'a> for PyBuilder<'py> {
         object.set_item(py_key.bind(self.py), value)
     }
 
-    fn end_object(&mut self, object: Self::Object) -> Result<Self::Value, Self::Error> {
+    fn on_end_object(&mut self, object: Self::Object) -> Result<Self::Value, Self::Error> {
         Ok(object.into_any())
     }
 }
