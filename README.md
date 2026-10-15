@@ -7,13 +7,13 @@ Median wall time on a ~5 MiB JSON.
 ![CLI performance: rjq vs jq](benchmark/plot.png)
 
 ```
-case         rjq eager              rjq lazy                    jq ms
---------------------------------------------------------------------
-access       50.98 ms (x1.81 jq)    27.30 ms (x3.38 jq)         92.29
-filter       58.57 ms (x2.17 jq)    52.51 ms (x2.42 jq)        126.87
-map          60.53 ms (x2.55 jq)    56.65 ms (x2.73 jq)        154.43
-filter_map   64.77 ms (x1.89 jq)    50.01 ms (x2.45 jq)        122.61
-if_else      54.16 ms (x1.90 jq)    32.21 ms (x3.19 jq)        102.67
+case         rjq eager              rjq --simd             rjq lazy                    jq ms
+------------------------------------------------------------------------------------------
+access       40.92 ms (x2.24 jq)    38.21 ms (x2.40 jq)    28.81 ms (x3.18 jq)         91.52
+filter       48.32 ms (x2.60 jq)    44.97 ms (x2.79 jq)    53.79 ms (x2.33 jq)        125.52
+map          49.71 ms (x2.96 jq)    46.33 ms (x3.17 jq)    59.11 ms (x2.49 jq)        147.03
+filter_map   49.44 ms (x2.44 jq)    46.30 ms (x2.60 jq)    52.62 ms (x2.29 jq)        120.57
+if_else      42.63 ms (x2.37 jq)    39.07 ms (x2.58 jq)    34.86 ms (x2.90 jq)        100.96
 ```
 **Optimization methods**
 
